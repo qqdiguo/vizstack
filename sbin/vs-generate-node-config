@@ -1,0 +1,494 @@
+#!/usr/bin/env python
+# VizStack - A Framework to manage visualization resources
+# Copyright (C) 2009  name of Shreekumar <shreekumar/at/users.sourceforge.net>
+# Copyright (C) 2009  name of Manjunath Sripadarao <manjunaths/at/users.sourceforge.net>
+# 
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License
+# as published by the Free Software Foundation; either version 2
+# of the License, or (at your option) any later version.
+# 
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+# 
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write to the Free Software
+# Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+
+"""
+vs-generate-node-config
+
+Program to find the detect and generate the local node configuration
+ - GPUs
+ - Framelock devices
+ - Connected displays
+
+Expects to run as root. 
+"""
+
+import os
+import sys
+import time
+import socket
+import re
+from pprint import pprint
+import pickle
+from optparse import OptionParser
+import shutil
+
+handeditCheckFileName = '/etc/vizstack/.autoconfig_checksum'
+outMasterFileName = '/etc/vizstack/master_config.xml'
+outNodeFileName   = '/etc/vizstack/node_config.xml'
+
+def getRemoteHostDetails(netmask):
+	"""
+
+Return a two-item list : [hostname, ipaddress] of an interface that has the required netmask.
+
+Parse the output of ifconfig to find the remote address needed --
+
+First, run ifconfig 
+
+slestest3:~/shree/vizstack-svn/trunk/src # ifconfig | grep -B 1 "inet addr"
+eth1      Link encap:Ethernet  HWaddr 00:1E:0B:73:85:EB
+          inet addr:15.146.228.66  Bcast:15.146.229.255  Mask:255.255.254.0
+--
+lo        Link encap:Local Loopback
+          inet addr:127.0.0.1  Mask:255.0.0.0
+
+Check IP address and match the IP addresses.
+
+Next, use gethostbyaddress to find the hostname corresponding to the IP address.
+	"""
+
+	maskStr = "Mask:%s"%(netmask)
+	f = os.popen('ifconfig | grep -B 1 "inet addr"','r')
+	if f is None:
+		print >>sys.stderr, "Failed to run ifconfig"
+		return [None, None]
+
+	outLines = f.readlines()
+	retCode = f.close()
+
+	if retCode is not None:
+		print >>sys.stderr, "ifconfig command failed"
+		return [None, None]
+
+	external_ip = None
+	for idx in range(len(outLines)):
+		thisLine = outLines[idx]
+		if thisLine.find(maskStr)==-1:
+			continue
+		# if we matched a line, then the same line will have
+		# the address we're looking for
+		addrIdx = thisLine.find('inet addr:')
+		if addrIdx == -1: # No match, not possible ?, but just in case
+			continue
+		startIdx = addrIdx + len('inet addr:')
+		endIdx = thisLine.find(' ', startIdx)
+		external_ip= thisLine[startIdx:endIdx]
+		break
+
+	# failure ?
+	if external_ip is None:
+		return [None, None]
+
+	try:
+		(hostName, aliases, ipAddr) = socket.gethostbyaddr(external_ip)
+	except socket.error, e:
+		# If gethostbyaddr failed, then we return hostName = None
+		#
+		print >>sys.stderr, "Failed to resolve IP address : %s"%(external_ip)
+		return [None, external_ip]
+
+	return [hostName, external_ip]
+
+temp_xconfig = "/tmp/.vgnc-xorg.conf"
+temp_doutput = "/tmp/.vgnc-doutput"
+
+def unlink_temp():
+	try:
+		os.unlink(temp_xconfig)
+	except:
+		pass
+	try:
+		os.unlink(temp_doutput)
+	except:
+		pass
+
+def runSystem(cmd, suppressOutput=True):
+	finalCmd = cmd
+	if suppressOutput==True:
+		finalCmd = finalCmd + ">/dev/null 2>/dev/null"
+
+	return os.system(finalCmd)
+
+def getOutput(cmd):
+	f = os.popen(cmd, "r")
+	return f.readlines()
+
+def showError(msg):
+	print >>sys.stderr, "ERROR : %s"%(msg)
+
+def exitError(msg):
+	showError(msg)
+	unlink_temp()
+	sys.exit(-1)
+#
+# Script execution starts here...
+# 
+parser = OptionParser(description = """
+This tool is meant for internal usage from the tool 'vs-configure-system'. Manual usage of this tool is NOT recommended, and may damage your installation. You have been warned!
+""")
+parser.add_option("-M", "--master", dest="master", help="Specify the master node.")
+parser.add_option("-p", "--master-port", dest="master_port", help="Specify the master port.")
+parser.add_option("-o", "--overwrite-suffix", dest="overwrite_suffix", help="Use this option to specify the overwrite suffix for the files that will be backed up.")
+parser.add_option("-m", "--remote-netmask", dest="remote_netmask", help="Use this option to specify the metmask of the interface that you want to use for HP RGS(Remote Graphics Software) or TurboVNC connections. The value needs to be in a.b.c.d notation.")
+parser.add_option("--recurse", action="store_true", default=False, dest="recurse", help="This option is for use by this tool itself. Avoid its usage from the command line.")
+
+(options, cmdArgs) = parser.parse_args(sys.argv[1:])
+if len(cmdArgs)>1:
+	print >>sys.stderr, "This program doesn't except any other arguments"
+	parser.print_help()
+	sys.exit(-1)
+
+if (options.recurse == True) and (len(cmdArgs)!=1):
+	print >>sys.stderr, "--recurse needs a single argument"
+	sys.exit(-1)
+
+if os.getuid() != 0:
+	exitError("vs-generate-node-config needs to run as root")
+
+# Are we called from the command line ?
+if options.recurse == False:
+
+	# Check that no X servers are running
+	ret = runSystem("pgrep X >/dev/null")
+	if ret==0:
+		exitError("It looks like you're running an X server on this node.\nPlease kill the X server and rerun this script.")
+
+	# Find the remote IP address for this node
+	# If we can't find a name, but can find an address, then return giving the
+	# address and a warning
+	remoteHost = None
+	remoteIP = None
+
+	if options.remote_netmask is not None:
+		[remoteHost, remoteIP] = getRemoteHostDetails(options.remote_netmask)
+		if remoteIP is None:
+			exitError("Failed to find the network information needed for remote access.")
+		if remoteHost is None:
+			showError("Failed to resolve detected remote IP address '%s'"%(remoteIP)) 
+	else:
+		try:
+			remoteHost = socket.gethostname()
+			remoteIP = socket.gethostbyname(remoteHost)
+		except socket.error, e:
+			showError("Failed to determine remote access details for network. Reason : %s"%(str(e)))
+	
+	unlink_temp()
+
+	# Generate a configuration file for all GPUs
+	# Use a dummy file as input to prevent nvidia-xconfig from being influenced
+	# by /etc/X11/xorg.conf
+
+
+	# First run with scanout. 
+	ret = runSystem("nvidia-xconfig -c non-existing-file -a --twinview -o %s"%(temp_xconfig))
+	if ret != 0:
+		exitError("Failed to generate temporary configuration file. Please ensure that you have installed the nVidia driver on this node.")
+
+	if options.overwrite_suffix is not None:
+		extraOpts = "--overwrite-suffix %s "%(options.overwrite_suffix)
+	else:
+		extraOpts = ""
+
+	# Call ourselves recursively in the context of a running X server
+	# This will fail if all GPUs are scanout GPUs
+	retCode = runSystem("xinit %s --recurse %s %s -- -config %s -logverbose 6"%
+	               (os.path.join(os.getcwd(),sys.argv[0]), extraOpts, temp_doutput, temp_xconfig))
+
+	if retCode == 0:
+		# Get got the nvidia related configuration
+		infofile = open(temp_doutput, "rb")
+		gpuInfo = pickle.load(infofile)
+		infofile.close()
+	else:
+		# Try use a no scanout technique. This will detect all GPUs irrespective of whether they have scanout or not
+		ret = runSystem("nvidia-xconfig -c non-existing-file -a --virtual=1024x768 --use-display-device=none -o %s"%(temp_xconfig))
+		if ret != 0:
+			exitError("Failed to generate temporary configuration file. Please ensure that you have installed the nVidia driver on this node.")
+
+		# Call ourselves recursively in the context of a running X server
+		retCode = runSystem("xinit %s --recurse %s %s -- -config %s -logverbose 6"%
+			       (os.path.join(os.getcwd(),sys.argv[0]), extraOpts, temp_doutput, temp_xconfig))
+
+		if retCode != 0:
+			# The most likely case why we'd come here would be if the power connectors were not inserted.
+			# FIXME: parse the log file /var/log/Xorg.0.log and attempt to find what went wrong
+			exitError("Failed to detect and generate configuration for this node %s"%(socket.gethostname()))
+
+		# Get the nvidia related configuration
+		infofile = open(temp_doutput, "rb")
+		gpuInfo = pickle.load(infofile)
+		infofile.close()
+
+	if len(gpuInfo)==0:
+		exitError("No GPUs found. Please chech whether the installed version of the nvidia driver is suitable for use with this software.")
+
+	# Cleanup the temporary files
+	unlink_temp()
+
+	# Find out the HP machine model
+	# Get the "Product Name" part.
+	# On a workstation, you may get multiple entries
+	# e.g. 
+	# [line 1]HP xw8600 Workstation
+	# [line 2]0A98h
+	#
+	# FIXME : Instead of matching strings, I just pick out the first match !
+	#
+	lines = getOutput('dmidecode | grep "Product Name:" | sed -e "s/.*Product Name: //" ')
+	machine_model = lines[0].rstrip() # first item, remove leading and trailing whitespace
+	
+
+	# Reorder the GPUs by ascending PCI id ...
+	# This matches the hardware level
+	gpuIndices = gpuInfo.keys()
+	gpuIndices.sort(lambda x,y:int(gpuInfo[x]['BusID'].split(":")[1])-int(gpuInfo[y]['BusID'].split(":")[1]))
+	newGPUInfo = {}
+	for idx in range(len(gpuIndices)):
+		newGPUInfo[idx] = gpuInfo[gpuIndices[idx]]
+	gpuInfo = newGPUInfo
+
+	didFileBackup = False
+
+	# May need to overwrite files if we're not excluded
+	if (options.master!="localhost") and (options.master!=socket.gethostname()):
+		doBackup = True
+		# If the checksum file didn't exist, then we will backup any existing files
+		try:
+			os.stat(handeditCheckFileName)
+		except OSError, e:
+			pass
+		else:
+			# If the checksum file exists, and doesn't match, then the files
+			# were modified by hand. That also calls for a backup
+			if (os.system('md5sum -c %s >/dev/null 2>/dev/null'%(handeditCheckFileName)))==0:
+				doBackup = False
+
+		if doBackup:
+			for fileName in [outMasterFileName, outNodeFileName]:
+				try:
+					os.stat(fileName)
+					shutil.copy2(fileName, fileName+options.overwrite_suffix)
+					didFileBackup = True
+				except OSError, e:
+					pass
+		
+	# generate the XML
+	msg_header = "<node>\n"
+	msg = "\t<name>%s</name>\n"%(socket.gethostname())
+	msg += "\t<model>%s</model>\n"%(machine_model)
+	# include remote access info if needed
+	# FIXME: need to check if any remote packages are installed ??
+	if (remoteHost is not None) or (remoteIP is not None):
+		msg +="\t<properties>\n"
+		if remoteHost is not None:
+			msg += "\t\t<remote_hostname>%s</remote_hostname>\n"%(remoteHost)
+		else:
+			msg += "\t\t<remote_hostname>%s</remote_hostname>\n"%(remoteIP)
+		msg +="\t</properties>\n"
+	for idx in range(len(gpuIndices)):
+		msg += "\t<gpu>\n"
+		msg += "\t\t<index>%d</index>\n"%(idx)
+		msg += "\t\t<bus_id>%s</bus_id>\n"%(gpuInfo[idx]["BusID"])
+		msg += "\t\t<type>%s</type>\n"%(gpuInfo[idx]["type"])
+		msg += "\t\t<useScanOut>%s</useScanOut>\n"%(gpuInfo[idx]["has_scanout"]) # If has_scanout is 1, then scanout is enabled on the GPU
+		msg += "\t</gpu>\n"
+	# Define a default keyboard
+	msg += "\t<keyboard>\n"
+	msg += "\t\t<index>0</index>\n"
+	msg += "\t\t<type>SystemKeyboard</type>\n"
+	msg += "\t</keyboard>\n"
+	# And a default mouse
+	msg += "\t<mouse>\n"
+	msg += "\t\t<index>0</index>\n"
+	msg += "\t\t<type>SystemMouse</type>\n"
+	msg += "\t</mouse>\n"
+	msg += "</node>"
+
+	# Print out the XML for the master
+	print msg_header
+	if didFileBackup:
+		print "\r<didOverwrite>1</didOverwrite>"
+	else:
+		print "\r<didOverwrite>0</didOverwrite>"
+	print msg
+
+	# If we need to write the configs locally, then do it now
+	if (options.master!="localhost") and (options.master!=socket.gethostname()):
+		
+		# Open the configuration file(s) for writing
+		try:
+			outMasterFile = open(outMasterFileName, 'w')
+		except IOError, e:
+			print >>sys.stderr, "Failed to create output configuration file '%s'. Reason:%s"%(outMasterFileName, str(e))
+			sys.exit(-1)
+
+		try:
+			outNodeFile = open(outNodeFileName, 'w')
+		except IOError, e:
+			print >>sys.stderr, "Failed to create output configuration file '%s'. Reason:%s"%(outNodeFileName, str(e))
+			sys.exit(-1)
+
+		# Write out the master information
+		print >>outMasterFile, """<?xml version="1.0" ?>
+<masterconfig
+ xmlns="http://www.hp.com"
+ xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+ xsi:schemaLocation="http://www.hp.com /opt/vizstack/share/schema/masterconfig.xsd" >
+\t<system>
+\t\t<type>sea_of_nodes</type>
+\t\t<master>%s</master>
+\t\t<master_port>%s</master_port>
+\t\t<master_auth>%s</master_auth>
+\t</system>
+</masterconfig>
+"""%(options.master, options.master_port, "Munge")
+
+		# Write out this node's configuration. 
+		# FIXME: this is not complete, as in
+		# the X server information isn't written out. But that's not a problem.
+		print >>outNodeFile, """<?xml version="1.0" ?>
+<nodeconfig
+ xmlns="http://www.hp.com"
+ xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+ xsi:schemaLocation="http://www.hp.com /opt/vizstack/share/schema/nodeconfig.xsd" >"""
+		print >>outNodeFile, "\t<nodes>"
+		print >>outNodeFile, "\t"+msg_header
+		for line in msg.split("\n"):
+			print >>outNodeFile, "\t"+line
+		print >>outNodeFile, "\t</nodes>"
+		print >>outNodeFile, "\t</nodeconfig>"
+	
+		# Close the files we created
+		outMasterFile.close()
+		outNodeFile.close()
+
+		# Maintain a checksum of the new files!
+		if os.system("md5sum %s %s > %s"%(outMasterFileName, outNodeFileName, handeditCheckFileName))!=0:
+			try:
+				os.unlink(handeditCheckFileName)
+			except OSError, e:
+				pass
+	# Cleanup & successful exit	
+	unlink_temp()
+	sys.exit(0)
+
+#
+# We'll come here in the context of a running X server.
+#
+# The X server is setup to run on all GPUs the nvidia configurator can find. TwinView is also enabled,
+# so all directly connected (and detected) display devices will power on...
+#
+
+output = getOutput("nvidia-settings -q gpus")
+
+#
+#This command would have returned output like
+#--------------------------------------------
+#2 GPUs on slestest1:0
+#
+#   [0] slestest1:0[gpu:0] (Quadro FX 5800)
+#
+#   [1] slestest1:0[gpu:1] (Quadro FX 5800)
+#--------------------------------------------
+#
+# We need to match the right lines
+# 
+# >>> s = "  [0] slestest1:0[gpu:0] (Quadro FX 5800)"
+# >>> print match( "^[\s]+\[([\d]+)\][\s](([\w\._\-]+):([0-9]+))(\[gpu:([0-9]+)\])[\s]+\((.*)\)\s*$",s ).groups()
+# ('0', 'slestest1:0', 'slestest1', '0', '[gpu:0]', '0', 'Quadro FX 5800')
+#
+
+matchRE = re.compile("^[\s]+\[([\d]+)\][\s](([\w\._\-]+):([0-9]+))(\[gpu:([0-9]+)\])[\s]+\((.*)\)\s*$")
+gpuInfo = {}
+for line in output:
+	ob = matchRE.match(line)
+	if ob is not None:
+		matchParts = ob.groups()
+		thisGPU = {}
+		thisGPU['DISPLAY']=matchParts[1] # slestest1:0
+		thisGPU['index']=matchParts[0]   # 0
+		thisGPU['ADDR']=matchParts[4]    # [gpu:0]
+		thisGPU['type']=matchParts[6]   # "Quadro FX 5500", etc
+
+		thisGPU['has_scanout'] = 0
+		out2 = getOutput("nvidia-settings -q [gpu:%s]/EnabledDisplays | grep Attribute"%(thisGPU['index']))
+		# will retun something like
+		#  Attribute 'EnabledDisplays' (servergfx:0[gpu:0]): 0x00000000.
+		val = out2[0].rstrip().split(" ")[-1] # get to the 0x0000.
+		val = val.rstrip()[:-1] # remove the trailing dot
+		if int(val, 16)>0:
+			thisGPU['has_scanout'] = 1
+
+		gpuInfo[int(thisGPU['index'])]=thisGPU
+			
+
+# Now, we have information about which GPUs are connected.
+# We need to find the BusIDs corresponding to the GPUs.
+# 
+# The file /var/log/Xorg.0.log has lines like
+#----------------------------------------------
+#(II) NVIDIA(0): NVIDIA GPU Quadro FX 5800 (GT200GL) at PCI:128:0:0 (GPU-0)
+#(II) NVIDIA(1): NVIDIA GPU Quadro FX 5800 (GT200GL) at PCI:96:0:0 (GPU-1) 
+#----------------------------------------------
+# Some produce output on two lines :-(
+#(II) NVIDIA(0): NVIDIA GPU Quadro FX 3450/4000 SDI (NV41GL) at PCI:10:0:0
+#(II) NVIDIA(0):     (GPU-0)
+#----------------------------------------------
+# We need to match these now!
+# and the magical regular expression is...
+matchRE = re.compile("^\(II\)[\s]NVIDIA\(([0-9]+)\):[\s]+NVIDIA GPU (.*)[\s]+at[\s]+(PCI:[0-9]+:[0-9]+:[0-9]+)[\s]+(\(GPU-([0-9]+)\)[\s]+)?$")
+#
+# ('Quadro FX 3700 (G92GL)', 'PCI:10:0:0', '0')
+#      Model                    BusID      Index
+#
+for line in open("/var/log/Xorg.0.log","r").readlines():
+	ob = matchRE.match(line)
+	if ob is not None:
+		matchParts = ob.groups()
+		# nVidia formats messages as NVIDIA(gpu-id), so this
+		# is what we rely on. Earlier, we were relying on the
+		# last part, which may or may not show up on the same
+		# line
+		gpuNum =int(matchParts[0])
+		#print "GPU number = %d, BusID=%s"%(gpuNum, matchParts)
+		#print "Match Line = %s"%(line)
+		#print matchParts
+		gpuInfo[gpuNum]['BusID'] = matchParts[2]
+
+#
+# FIXME: detect any framelock devices
+# FIXME: detect actual display devices
+
+#
+# Send output to our caller by serializing the information
+# we use the pickle module for this
+#
+
+# Delete it if it already exists
+try:
+	os.unlink(cmdArgs[0])
+except:
+	pass
+
+# Pickle it !
+outfile = open(cmdArgs[0], "wb")
+pickle.dump(gpuInfo, outfile)
+outfile.close()
+
+sys.exit(0)

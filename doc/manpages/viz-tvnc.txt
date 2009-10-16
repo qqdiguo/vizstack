@@ -1,0 +1,131 @@
+VIZ-TVNC(1)
+===========
+Shree Kumar <shreekumar@users.sourceforge.net>
+
+
+NAME
+----
+viz-tvnc - starts a remote desktop session using TurboVNC, with VirtualGL
+setup for running accelerated OpenGL applications.
+
+
+SYNOPSIS
+--------
+*viz-tvnc* ['OPTIONS']
+
+
+DESCRIPTION
+-----------
+The viz-tvnc(1) command starts an interactive remote desktop session
+for you.  A GPU for is picked up automatically for you to use for 
+OpenGL rendering.  You may also choose a specific type of GPU.
+
+After starting the session, you will need to connect to the session
+using the TurboVNC client. The TurboVNC client is typically installed on
+your desktop or laptop.
+
+For a better user experience, consider installing and using the
+graphical VizStack Remote Access tools.
+
+OPTIONS
+-------
+*-g, --geometry*='GEOMETRY'::
+    The resolution to run the desktop at. This can be any '<width>x<height>'
+    formatted value. The geometry does not need to match any display device 
+    resolution. Width needs to be a multiple of 8, and <width>x<height> may 
+    not be lesser than '304x200'. Note that larger resolutions may result in
+    higher network bandwidth usage, CPU utilization and in general, lower
+    performance.
+
+*-c, --connect-to*='HOST'::
+    This parameter needs to be in the format \"host[:port]". Tells 
+    the started TurboVNC server to connect to a listening TurboVNC 
+    viewer on the given host and port. You need to start the TurboVNC 
+    client in the "listening" mode prior to running this script. If
+    you did not specify a listening port number explicitly, then the
+    client will be listening on port 5500, and this is taken as the
+    default port. Note that failure to connect the TurboVNC server
+    to the specified client is not treated as a failure, and the 
+    desktop session continues to run.
+
+*-b, --batch-mode*::
+    Use this if you are running this script via a batch scheduler. This will 
+    direct the script to allocate resources on the machine where the script
+    gets run by the scheduler.
+
+*--gpu-type*='TYPE'::
+    Use a specific type of GPU 'TYPE' for this remote session. Note that  
+    GPU types will have spaces in it, so you will need to quote the string.
+
+*-a, --allocate-from*='NODE'::
+    Allocate the GPU on host 'NODE'. If you use this option multiple times, 
+    then a single GPU from one of the specified hosts will be used. Note that
+    the allocation is independent of the order in which the hostnames are 
+    specified on the command line. This option cannot be used if -b is used.
+
+*--show-gpu-types*::
+    Prints out a list of GPU types that are potentially available for allocation.
+
+*-h, --help*::
+    Prints this message.
+
+*--automation*::
+    This option is intended for automation use by the VizStack Remote Access 
+    tools. Not intended for command line usage.
+
+EXIT STATUS
+-----------
+*0*::
+    Success
+
+*1*::
+    Failure (unable to allocate resources, termination via
+    ^C, any other abnormal termination)
+
+
+EXAMPLES
+--------
+
+To get a desktop running at a default resolution, use
+
+*# viz_tvnc*
+
+On success, this will print out the address to which you need
+to connect using the TurboVNC clent.  Logout of the desktop
+when you are done.  Terminating the script by pressing ^C
+is also one way to give up the desktop, but this is not
+recommended as you may loose work.
+
+To start a desktop at resolution 1144x1000, use
+
+*# viz_tvnc -g 1144x1000*
+
+To start the same desktop on a Quadro FX 5800 GPU, you would use
+
+*# viz_tvnc --gpu-type="Quadro FX 5800" -g 1144x1000*
+
+From a user experience point of view, you would want
+the remote desktop to automatically show up on your 
+local dekstop.  To achieve this, you need to start a 
+TurboVNC client in the "listen" mode on your desktop.
+Follow that up by running this command
+
+*#viz_tvnc -c <desktop_hostname>*
+
+The remote desktop should now pop up on your dekstop.
+
+AUTHOR
+------
+Written by Shree Kumar <shreekumar@users.sourceforge.net>
+
+
+RESOURCES
+---------
+SourceForge: <http://vizstack.sourceforge.net>
+
+COPYING
+-------
+Copyright \(C) 2009-2010 Hewlett-Packard. Free use of this software is
+granted under the terms of the GNU General Public License (GPL) version
+2.
+

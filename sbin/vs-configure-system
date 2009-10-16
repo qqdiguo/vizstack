@@ -1,0 +1,550 @@
+#!/usr/bin/env python
+# VizStack - A Framework to manage visualization resources
+# Copyright (C) 2009  name of Shreekumar <shreekumar/at/users.sourceforge.net>
+# Copyright (C) 2009  name of Manjunath Sripadarao <manjunaths/at/users.sourceforge.net>
+# 
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License
+# as published by the Free Software Foundation; either version 2
+# of the License, or (at your option) any later version.
+# 
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+# 
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write to the Free Software
+# Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+
+"""
+vs-configure-system
+
+The most generic configuration File Generator for VizStack.
+
+Modus operandi is :
+
+ 1. Get a list of nodes from the user
+ 2. Use a scheduler, and run the "vs-detect-node-config" script on those nodes.
+      - get the standard output and errror
+      - get the return code. If the return code indicates failure, then we
+        have a problem.
+ 3. If all goes through, combine all node information info system_config.xml
+
+"""
+
+import sys
+
+# Check whether python-xml is installed. RPM might get installed without this dependency being in place.
+try:
+	from xml.dom import minidom
+except ImportError, e:
+	print >>sys.stderr, "Please install the package python-xml. This package is a needed for this script to run"
+	sys.exit(-1)
+	
+# Check whether the environment is setup right
+try:
+	import metascheduler
+except ImportError, e:
+	print >>sys.stderr, "The environment is not setup to use this script properly. Please logout & log back in again to setup the proper PYTHONPATH."
+	sys.exit(-1)
+
+from optparse import OptionParser
+import os
+import socket
+import subprocess
+import domutil
+import string
+import time
+import re
+import vsapi
+import shutil
+from pprint import pprint
+
+# Output of this script goes here by default.
+handeditCheckFileName = '/etc/vizstack/.autoconfig_checksum'
+outMasterFileName = '/etc/vizstack/master_config.xml'
+outNodeFileName   = '/etc/vizstack/node_config.xml'
+outRGFileName     = '/etc/vizstack/resource_group_config.xml'
+
+def expandNodes(spec):
+	ob = re.match('^(.*)\[([0-9,+\-]+)\]$', spec)
+	if ob is None:
+		return [spec]
+
+	nodePrefix = ob.groups()[0]
+	if len(nodePrefix)==0:
+		raise ValueError, "Bad node specification %s"%(spec)
+
+	expansionSpec = ob.groups()[1]
+	ranges = expansionSpec.split(",")
+	nodeSuffix = []
+	for thisRange in ranges:
+		if len(thisRange)==0: # Empty string, error
+			raise ValueError, "Bad node specification %s"%(spec)
+		rangeParts = thisRange.split("-")
+		if len(rangeParts)==1: # only number
+			try:
+				nodeSuffix.append(int(rangeParts[0]))
+			except:
+				raise ValueError, "Bad node specification %s"%(spec)
+		elif len(rangeParts)==2:
+			try:
+				fromIndex = int(rangeParts[0])
+				toIndex = int(rangeParts[1])
+				if toIndex<fromIndex:
+					raise ValueError, "Bad node specification %s"%(spec)
+			except:
+				raise ValueError, "Bad node specification %s"%(spec)
+
+			for idx in range(fromIndex,toIndex+1):
+				nodeSuffix.append(idx)
+
+	return map(lambda x: nodePrefix+str(x) , nodeSuffix)
+
+#
+# Script execution starts here...
+#
+startTime = time.ctime()
+backup_suffix = "." + startTime.replace(' ','_')
+
+validSchedulers = ['slurm', 'ssh', 'local']
+
+# Parse command line options
+parser = OptionParser()
+parser.add_option("-s", "--scheduler", dest="scheduler", help = "Configure VizStack to use this scheduler. Possible values are : %s"%(validSchedulers))
+parser.add_option("-m", "--remote-netmask", dest="remote_netmask", help="Use this option to speficy the metmask of the interface that you want to use for HP RGS(Remote Graphics Software) or TurboVNC connections. The value needs to be in a.b.c.d notation.")
+parser.add_option("-p", "--scheduler-param", dest="scheduler_param", default="", help = "Pass a specific parameter to the scheduler. Currently, this can be used with the slurm scheduler, causing VizStack to use a specific partition")
+parser.add_option("-c", "--connection-method", dest="connection_method", help = "Use this connection method to connect to the visualization nodes. Possible values are: %s"%(validSchedulers))
+
+(options, args) = parser.parse_args(sys.argv[1:])
+
+# Validate command line arguments.
+
+if options.remote_netmask is not None:
+	matchOb = re.match("^([0-9]+)\.([0-9]+)\.([0-9]+)\.([0-9]+)$", options.remote_netmask)
+	if matchOb is None:
+		print >>sys.stderr, "Bad netmask specified. The netmask must be specified in dotted decimal notation, a.b.c.d"
+		sys.exit(-1)
+	for part in matchOb.groups():
+		val = int(part)
+		if val>255:
+			print >>sys.stderr, "Bad netmask specified '%s'"%(options.remote_netmask)
+			sys.exit(-1)
+
+errorsHappened = False
+
+if options.scheduler is None:
+	print >>sys.stderr, "You need to specify a scheduler"
+	errorsHappened = True
+else:
+	if options.scheduler not in validSchedulers:
+		print >>sys.stderr, "Valid values for connection method are : %s"%(validSchedulers)
+		errorsHappened = True
+
+if options.connection_method is None:
+	if options.scheduler is not None:
+		options.connection_method = options.scheduler
+	else:
+		print >>sys.stderr, "You need to specify a connection method"
+		errorsHappened = True
+else:
+	if options.connection_method not in validSchedulers:
+		print >>sys.stderr, "Valid values for connection method are : %s"%(validSchedulers)
+		errorsHappened = True
+
+if len(args)==0:
+	print >>sys.stderr, "You need to specify a list of nodes"
+	errorsHappened = True
+
+if errorsHappened:
+	parser.print_help()
+	sys.exit(-1)
+
+# Create a node list from args, using SLURM style expansion.
+nodeList = []
+for nodeSpec in args:
+	try:
+		nodeList = nodeList + expandNodes(nodeSpec)
+	except ValueError, e:
+		print >>sys.stderr, str(e)
+		sys.exit(-1)
+
+# Error out if the same node is used multiple times.
+nodeHash = {}
+for node in nodeList:
+	if nodeHash.has_key(node):
+		print >>sys.stderr, "ERROR: Node '%s' specified more than once on the command line"%(node)
+	else:
+		nodeHash[node] = None
+
+if len(nodeHash)<len(nodeList):
+	sys.exit(-1)
+
+# If localhost is present in the node list, then it's the only one accepted
+if 'localhost' in nodeList:
+	if len(nodeList) != 1:
+		print >>sys.stderr, "ERROR: When specified, localhost can be the only node."
+		sys.exit(-1)
+	singleNode = True
+else:
+	singleNode = False
+
+# Create the scheduler
+try:
+	scheduler = metascheduler.createSchedulerType(options.connection_method, nodeList, options.scheduler_param)
+except ValueError, e:
+	print >>sys.stderr, "ERROR: Couldn't create the scheduler requested. Reason: %s"%(str(e))
+	# FIXME: we need to say why we failed ??
+	sys.exit(-1)
+
+# Info about master
+
+if singleNode!=True:
+	masterPort = "50000"
+	masterLocation = socket.gethostname()
+else:
+	masterPort = vsapi.SSM_UNIX_SOCKET_ADDRESS
+	masterLocation = "localhost"
+
+authMethod = "Munge"
+
+didFileBackup = False # Will be used to accumulate overwrite from slaves
+
+# Go over all the nodes, gathering information
+overallConfig = []
+allRemoteHosts = []
+total_gpus = 0
+for node in nodeList:
+	print "\nProcessing Node '%s'..."%(node)
+
+	# FIXME: handle exceptions below!
+
+	# Allocate the node with the scheduler
+	try:
+		thisNode = scheduler.allocate(os.getuid(), os.getgid(), [node])
+	except Exception, e:
+		print >>sys.stderr, "Couldn't get access to node '%s'. Reason :\n%s"%(node, str(e))
+		sys.exit(-1)
+
+	# Run the node config generator
+	try:
+		cmd = ['/opt/vizstack/sbin/vs-generate-node-config']
+		if options.remote_netmask is not None:
+			cmd.append('--remote-netmask')
+			cmd.append(options.remote_netmask)
+		cmd.append('--master')
+		cmd.append(masterLocation)
+		cmd.append('--master-port')
+		cmd.append(masterPort)
+		cmd.append('--overwrite-suffix')
+		cmd.append(backup_suffix)
+		proc = thisNode.run(string.join(cmd, " "), node, None, subprocess.PIPE, subprocess.PIPE)
+		proc.wait()
+	except Exception, e:
+		print >>sys.stderr, "Failed to run vs-generate-node-config on node '%s'. Reason :\n%s"%(node, str(e))
+		print >>sys.stderr, ""
+		print >>sys.stderr, "Ensure that the VizStack software is installed on node '%s', as well as other nodes."%(node)
+		print >>sys.stderr, "Also, ensure that the version number matched the software installed on this node."
+		print >>sys.stderr, ""
+		print >>sys.stderr, "Please fix the above errors & run this tool again." 
+		sys.exit(-1)
+
+
+	# Save its output, error and return code
+	procStdOut = proc.getStdOut()
+	procStdErr = proc.getStdErr()
+	retCode = proc.getExitCode()
+
+	# Deallocate the node from the scheduler
+	try:
+		thisNode.deallocate()
+	except Exception, e:
+		print >>sys.stderr, "Failed to let go of access to node '%s'. Reason :\n%s"%(node, str(e))
+		print >>sys.stderr, ""
+		print >>sys,stderr, "Please fix the above errors & run this tool again" 
+
+	# Handle Error
+	if retCode != 0:
+		print >>sys.stderr, "Errors happened while trying to get the configuration of node '%s'. Reason:"%(node)
+		print >>sys.stderr, ""
+		print >>sys.stderr, procStdErr
+		print >>sys.stderr, ""
+		print >>sys.stderr, "Please fix the above errors & run this tool again" 
+		sys.exit(-1)
+
+	# Process return XML. We don't expect errors here. Any errors here are bugs, really!
+	dom = minidom.parseString(procStdOut)
+	doc = dom.documentElement
+
+	# Accumulate overwrites
+	remoteVal = bool(int(domutil.getValue(doc.getElementsByTagName('didOverwrite')[0])))
+	didFileBackup = didFileBackup or remoteVal
+
+	gpus = doc.getElementsByTagName("gpu")
+	num_gpus = len(gpus)
+	total_gpus += num_gpus
+
+	# Give the user some idea about progress by showing what was detected
+	print "  Detected %d GPU(s) : "%(num_gpus),
+	for gpu in gpus:
+		print "'%s'"%(domutil.getValue(domutil.getChildNode(gpu, "type"))), 
+	print
+
+	# Generate the config for this node
+	nc  = "<!-- Node '%s', machine model '%s' has %d GPU(s) -->\n"%(node, domutil.getValue(doc.getElementsByTagName('model')[0]), num_gpus)
+	nc += "<node>\n"
+	thisRemoteHost = domutil.getValue(doc.getElementsByTagName('name')[0]) # Use the name that the node chooses to identify itself as
+	if singleNode:
+		thisRemoteHost = "localhost"
+	allRemoteHosts.append(thisRemoteHost)
+	nc += "\t<name>%s</name>\n"%(thisRemoteHost)
+	nc += "\t<model>%s</model>\n"%(domutil.getValue(doc.getElementsByTagName('model')[0]))
+	propsNode = doc.getElementsByTagName('properties')[0]
+	if propsNode is not None:
+		nc += "\t<properties>\n"
+		extHostNameNode = domutil.getChildNode(propsNode, "remote_hostname")
+		if extHostNameNode:
+			nc += "\t\t<remote_hostname>%s</remote_hostname>\n"%(domutil.getValue(extHostNameNode))
+		nc += "\t</properties>\n"
+	for gpu in gpus:
+		nc += "\t<gpu>\n"
+		for prop in ['index','bus_id','type','useScanOut']:
+			nc += "\t\t<%s>%s</%s>\n"%(prop, domutil.getValue(domutil.getChildNode(gpu, prop)),prop)
+		nc += "\t</gpu>\n"
+
+	kbdNodes = doc.getElementsByTagName("keyboard")
+	for kbd in kbdNodes:
+		nc += "\t<keyboard>\n"
+		nc += "\t\t<index>%s</index>\n"%(domutil.getValue(domutil.getChildNode(kbd, "index")))
+		nc += "\t\t<type>%s</type>\n"%(domutil.getValue(domutil.getChildNode(kbd, "type")))
+		nc += "\t</keyboard>\n"
+
+	mouseNodes = doc.getElementsByTagName("mouse")
+	for mouse in mouseNodes:
+		nc += "\t<mouse>\n"
+		nc += "\t\t<index>%s</index>\n"%(domutil.getValue(domutil.getChildNode(mouse, "index")))
+		nc += "\t\t<type>%s</type>\n"%(domutil.getValue(domutil.getChildNode(mouse, "type")))
+		nc += "\t</mouse>\n"
+
+	# We need to configure the X servers on this machine
+	# We'll choose sensible defaults for now
+	#
+	# :0                        => reserved for RGS
+	# :1 to :1+<n>-1            => Virtual Servers for TurboVNC, one per GPU
+	# :1+<n> to :1+<2*n>-1    => One X server per GPU
+	#
+	# In case of need, the administrator can hand edit to their tastes, but this
+	# will get them up and running in a jiffy !
+	#
+
+	nc += "\t<!-- :0 reserved for HP RGS -->\n"
+	nc += "\t<x_server>\n"
+	nc += "\t\t<type>normal</type>\n"
+	nc += "\t\t<range><from>0</from><to>0</to></range>\n"
+	nc += "\t</x_server>\n"
+
+	vncStart = 1
+	vncEnd = vncStart + num_gpus - 1
+	if num_gpus == 1:
+		nc += "\t<!-- virtual :%d for TurboVNC -->\n"%(vncStart)
+	else:
+		nc += "\t<!-- virtual :%d to :%d used for TurboVNC -->\n"%(vncStart, vncEnd)
+	nc += "\t<x_server>\n"
+	nc += "\t\t<type>virtual</type>\n"
+	nc += "\t\t<range><from>%d</from><to>%d</to></range>\n"%(vncStart, vncEnd)
+	nc += "\t</x_server>\n"
+
+	xStart = vncEnd + 1
+	xEnd = xStart + num_gpus - 1
+	if num_gpus == 1:
+		nc += "\t<!-- :%d for user X server -->\n"%(xStart)
+	else:
+		nc += "\t<!-- :%d to :%d for user X servers -->\n"%(xStart, xEnd)
+	nc += "\t<x_server>\n"
+	nc += "\t\t<type>normal</type>\n"
+	nc += "\t\t<range><from>%d</from><to>%d</to></range>\n"%(xStart, xEnd)
+	nc += "\t</x_server>\n"
+
+	nc += "</node>\n"
+	overallConfig.append(nc)
+
+# Yahoo ! We're done !!!
+
+# Show the user a summary
+summary =  """
+An approximate summary of this configuration is :
+
+  - VizStack SSM running at host '%s', port '%s'
+  - %d nodes will be managed by the SSM
+    - %d GPU(s) are available
+    - scheduler used will be '%s'
+    - see file '%s' for node configuration & scheduler details
+
+"""%(masterLocation, masterPort, len(nodeList), total_gpus, options.scheduler, outNodeFileName)
+
+print summary
+
+doBackup = True
+# If the checksum file didn't exist, then we will backup any existing files
+try:
+	os.stat(handeditCheckFileName)
+except OSError, e:
+	pass
+else:
+	# If the checksum file exists, and doesn't match, then the files
+	# were modified by hand. That also calls for a backup
+	if (os.system('md5sum -c %s >/dev/null 2>/dev/null'%(handeditCheckFileName)))==0:
+		doBackup = False
+
+if doBackup:
+	for fileName in [outMasterFileName, outNodeFileName]:
+		try:
+			os.stat(fileName)
+			shutil.copy2(fileName, fileName+backup_suffix)
+			didFileBackup = True
+		except OSError, e:
+			pass
+	
+# Open the configuration file(s) for writing
+try:
+	outMasterFile = open(outMasterFileName, 'w')
+except IOError, e:
+	print >>sys.stderr, "Failed to create output configuration file '%s'. Reason:%s"%(outMasterFileName, str(e))
+	sys.exit(-1)
+
+try:
+	outNodeFile = open(outNodeFileName, 'w')
+except IOError, e:
+	print >>sys.stderr, "Failed to create output configuration file '%s'. Reason:%s"%(outNodeFileName, str(e))
+	sys.exit(-1)
+
+# Write out the header
+print >>outMasterFile, """<?xml version="1.0" ?>
+
+<masterconfig
+ xmlns="http://www.hp.com"
+ xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+ xsi:schemaLocation="http://www.hp.com /opt/vizstack/share/schema/masterconfig.xsd" >
+<!--
+
+Please don't change the above lines. If you change them, then any hand-edits
+you make to this file will be difficult to validate.
+
+VizStack System Configuration File. To activate this configuration
+  1. Copy this file to /etc/vizstack/system_config.xml
+  2. Start the SSM as root (/opt/vizstack/bin/vs-ssm)
+
+This file was generated automatically by running the command line
+
+# %s
+
+(Note: double hyphens in the above command line is converted to a double underscore
+to adhere to XML syntax restrictions)
+
+This command was run at : %s
+
+%s
+
+-->
+"""%(string.join(sys.argv," ").replace('--','__'), startTime, summary)
+
+# Write out information about the master
+print >>outMasterFile, """
+\t<system>
+\t\t<type>sea_of_nodes</type>
+\t\t<master>%s</master>
+\t\t<master_port>%s</master_port>
+\t\t<master_auth>%s</master_auth>
+\t</system>
+"""%(masterLocation, masterPort, "Munge")
+
+# Write out the footer
+print >>outMasterFile, """
+</masterconfig>
+"""
+
+
+# Write out information about each node
+print >>outNodeFile, """<?xml version="1.0" ?>
+
+<nodeconfig
+ xmlns="http://www.hp.com"
+ xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+ xsi:schemaLocation="http://www.hp.com /opt/vizstack/share/schema/nodeconfig.xsd" >"""
+
+print >>outNodeFile, "\t<nodes>\n"
+for cfg in overallConfig:
+	for line in cfg.split("\n"):
+		print >>outNodeFile, "\t\t", line
+print >>outNodeFile, "\t</nodes>\n"
+
+# Write out the scheduler info
+print >>outNodeFile, "\t<scheduler>"
+print >>outNodeFile, "\t\t<type>%s</type>"%(options.scheduler)
+for nodeName in allRemoteHosts:
+	print >>outNodeFile,"\t\t<node>%s</node>"%(nodeName)
+print >>outNodeFile, "\t</scheduler>"
+
+# Write out the footer
+print >>outNodeFile, """
+</nodeconfig>
+"""
+
+# Done...
+outMasterFile.close()
+outNodeFile.close()
+
+print """
+To activate this configuration, you need to start the SSM
+  # /opt/vizstack/sbin/vs-ssm start
+"""
+
+if didFileBackup:
+	print """One or more files were backed up during this configuration. 
+All the original files have been backed up with a name suffix '%s'"""%(backup_suffix)
+
+# Maintain a checksum of the current files!
+if os.system("md5sum %s %s > %s"%(outMasterFileName, outNodeFileName, handeditCheckFileName))!=0:
+	try:
+		os.unlink(handeditCheckFileName)
+	except OSError, e:
+		pass
+
+# Create an empty resource group configuration file if it
+# does not exist. We create this as a convenience to the user
+# We don't install this as part of the RPM, so this won't get
+# removed when the RPM goes away.
+try:
+	os.stat(outRGFileName) # Test for file existence!
+except OSError, e:
+	try:
+		outRGFile = open(outRGFileName, 'w')
+		print >>outRGFile, """<?xml version="1.0" ?>
+<resourcegroupconfig
+ xmlns="http://www.hp.com"
+ xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+ xsi:schemaLocation="http://www.hp.com /opt/vizstack/share/schema/resourcegroupconfig.xsd" >
+
+<!-- 
+
+Define any needed resource groups here. At this time, you may create Tiled Display 
+definitions for your site users to use. 
+
+For an example of how to generate the needed XML, look at the sample at 
+
+/opt/vizstack/share/samples/tiled_display/programmatic-tiled-display.py
+
+Future version of VizStack will have a GUI to help creation of Tiled Displays.
+But, till then, good luck !
+
+-->
+
+</resourcegroupconfig>"""
+		outRGFile.close()
+	except IOError, e:
+		print >>sys.stderr, "Failed to create output configuration file '%s'. Reason:%s"%(outRGFileName, str(e))
+		sys.exit(-1)
+
+# Nothing succeeds like success !
+sys.exit(0)

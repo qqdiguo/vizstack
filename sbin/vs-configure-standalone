@@ -1,0 +1,68 @@
+#!/usr/bin/env python
+# VizStack - A Framework to manage visualization resources
+# Copyright (C) 2009  name of Shreekumar <shreekumar/at/users.sourceforge.net>
+# Copyright (C) 2009  name of Manjunath Sripadarao <manjunaths/at/users.sourceforge.net>
+# 
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License
+# as published by the Free Software Foundation; either version 2
+# of the License, or (at your option) any later version.
+# 
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+# 
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write to the Free Software
+# Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+
+"""
+vs-configure-standalone
+
+Convenient script to configure VizStack in a standalone configuration.
+
+A standalone configuration means --
+  1. VizStack is deployed on this single node
+  2. Users will typically need to have login access to this node to get access to resources
+
+You don't need to install and configure munge if you want to run in this configuration.
+
+"""
+import os
+import sys
+import string
+from optparse import OptionParser
+
+parser = OptionParser(description = 
+"""Configures this machine as a standalone VizStack node. This is a quick way of instantly converting a single machine with GPUs into a sharable visualization resource. Given the ease of configuration, this also offers a low-overhead (and impact) way of trying out the VizStack software.
+
+After you configurate the system this way, you need to run the VizStack SSM. These two simple steps will allow you to 
+ 1. Provide access to multiple remote visualization users (depending on how many GPUs you have)
+ 2. Use the GPUs to drive one or more displays in a configuration of your choice
+ 3. Mix of (1) & (2), again depending on the number of GPUs at your disposal.
+
+Ensure that you have stopped all X servers before running this script. The easiest way to ensure this is to run the command "telinit 3"
+""")
+parser.add_option("-m", "--remote-netmask", dest="remote_netmask", help="Use this option to speficy the metmask of the interface that you want to use for HP RGS(Remote Graphics Software) or TurboVNC connections. The value needs to be in a.b.c.d notation.")
+(options, args) = parser.parse_args(sys.argv[1:])
+
+if len(args)>1:
+	parser.print_help()
+	sys.exit(-1)
+
+cmd = ['/opt/vizstack/sbin/vs-configure-system']
+
+if options.remote_netmask is not None:
+	cmd.append("--remote-netmask")
+	cmd.append(options.remote_netmask)
+
+cmd = cmd + ['-s','local', 'localhost']
+
+ret = os.system(string.join(cmd," "))
+if ret != 0:
+	print >>sys.stderr, "Failed to configure standalone configuration"
+	sys.exit(ret)
+
+sys.exit(0)
+

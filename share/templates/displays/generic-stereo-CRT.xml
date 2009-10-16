@@ -1,0 +1,27 @@
+<?xml version="1.0" ?>
+
+<displayconfig 
+ xmlns="http://www.hp.com"
+ xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+ xsi:schemaLocation="http://www.hp.com /opt/vizstack/share/schema/displayconfig.xsd" >
+	<model>GenericStereoCRT</model>
+	<vendor>generic</vendor>
+	<input>analog</input>
+	<hsync>
+		<min>30</min>
+		<max>150</max>
+	</hsync>
+	<vrefresh>
+		<min>50</min>
+		<max>120</max>
+	</vrefresh>
+	<default_mode>1280x1024_110</default_mode>
+	<mode>
+		<type>modeline</type>
+		<alias>1280x1024_110</alias>
+		<width>1280</width>
+		<height>1024</height>
+		<refresh>110</refresh>
+		<value>211.22  1280 1376 1520 1760  1024 1025 1028 1091 -HSync +Vsync</value> <!-- GTF generated modeline !-->
+	</mode>
+</displayconfig>
