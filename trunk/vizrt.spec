@@ -1,7 +1,7 @@
 Summary: VizStack Remote Access Tools
 Name: vizrt
-Version: 0.9
-Release: 1
+Version: 1.0
+Release: 0
 License: GPLV2
 Group: Applications/Internet
 URL: http://vizstack.sourceforge.net
