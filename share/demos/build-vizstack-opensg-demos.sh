@@ -19,7 +19,7 @@
 # Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
 
-DEMO_VERSION=0.9
+DEMO_VERSION=1.0
 
 if test -f /etc/SuSE-release ;
 then

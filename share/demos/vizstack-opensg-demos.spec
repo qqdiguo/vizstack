@@ -1,6 +1,6 @@
 Summary: HP Visualization Stack
 Name: vizstack-opensg-demos
-Version: 0.9
+Version: 1.0
 Release: 0
 License: GPLV2
 Group: Development/Tools
