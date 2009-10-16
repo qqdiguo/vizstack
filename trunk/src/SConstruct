@@ -1,0 +1,62 @@
+# VizStack - A Framework to manage visualization resources
+# Copyright (C) 2009  name of Shreekumar <shreekumar/at/users.sourceforge.net>
+# Copyright (C) 2009  name of Manjunath Sripadarao <manjunaths/at/users.sourceforge.net>
+# 
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License
+# as published by the Free Software Foundation; either version 2
+# of the License, or (at your option) any later version.
+# 
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+# 
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write to the Free Software
+# Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+
+import os
+
+env = Environment(
+  CXXFLAGS=['-g'],
+  LIBPATH=['%s/install/lib'%(os.environ['HOME'])],
+  CPPPATH=['%s/install/include'%(os.environ['HOME'])])
+
+vsdom = env.Object('vsdomparser.cpp')
+
+env.Program(
+  target='vs-generate-xconfig',
+  source=['vs-generate-xconfig.cpp',vsdom],
+  LIBS=['xerces-c'])
+
+env.Program(
+  target='vs-X',
+  source=['vs-X.cpp',vsdom],
+  LIBS=['xerces-c'])
+
+env.Program(
+  target='vs-Xv',
+  source=['vs-Xv.cpp',vsdom],
+  LIBS=['xerces-c'])
+
+env.Program(
+  target='vs-aew',
+  source=['vs-aew.cpp'])
+
+env.Program(
+  target='vs-Xkill',
+  source=['vs-Xkill.cpp'])
+
+env.Program(
+  target='vs-GDMlauncher',
+  source=['vs-GDMlauncher.cpp'])
+
+env.Program('vs-wait-x.cpp', LIBS=['X11'])
+
+#env.Program(
+#  target='vs-identify-display',
+#  source=['vs-identify-display.cpp'],
+#  LIBS=['glut'])
+
+SharedLibrary(source='pam_vizstack_rgs_setuser.c', LIBS=['pam'], SHLIBPREFIX='')
