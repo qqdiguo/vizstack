@@ -2,8 +2,8 @@
 
 /*
 * VizStack - A Framework to manage visualization resources
-* Copyright (C) 2009  name of Shreekumar <shreekumar/at/users.sourceforge.net>
-* Copyright (C) 2009  name of Manjunath Sripadarao <manjunaths/at/users.sourceforge.net>
+
+* Copyright (C) 2009-2010 Hewlett-Packard
 * 
 * This program is free software; you can redistribute it and/or
 * modify it under the terms of the GNU General Public License
