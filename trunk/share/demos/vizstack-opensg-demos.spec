@@ -1,7 +1,7 @@
 Summary: HP Visualization Stack
 Name: vizstack-opensg-demos
 Version: 1.0
-Release: 0
+Release: 1
 License: GPLV2
 Group: Development/Tools
 URL: http://www.hp.com/go/visualization
@@ -41,6 +41,9 @@ rm -rf $RPM_BUILD_ROOT
 %post
 
 %changelog
+* Thu Nov 05 2009 Sunil Shinde <sunil.shinde@hp.com>
+- Bumped up the version string to 1.0-1
+
 * Wed Jul 15 2009 Shree Kumar <shree.kumar@hp.com> - 
 - Improved window size to 800x600, so that people
   don't ignore the windows!
