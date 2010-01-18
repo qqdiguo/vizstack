@@ -93,9 +93,6 @@
 
 #define XSERVER_LOCK_DELAY 5
 
-// FIXME: this has a dependency on vsapi. Could be unified using masterPort
-#define SSM_UNIX_SOCKET_ADDRESS "/tmp/vs-ssm-socket"
-
 //#define USE_MUNGE
 
 #include <unistd.h>
