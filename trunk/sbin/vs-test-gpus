@@ -23,6 +23,7 @@ vs-test-gpus : Tool to test GPUs on a vizstack system
 
 import sys
 import os
+import time
 from optparse import OptionParser
 from vsapi import Server, VizError, GPU, Screen, ResourceAccess, VizNode, extractObjects
 
@@ -53,7 +54,7 @@ def test_local_gpu():
 def identify_gpu(gpu):
 	return "GPU %d on host %s"%(gpu.getIndex(), gpu.getHostName())
 
-def test_gpu(ra, gpu, shell=False):
+def test_gpu(ra, gpu, showMessages=False, shell=False):
 	print
 	print "Testing %s"%(identify_gpu(gpu))
 	srv = Server(0, hostName=gpu.getHostName())
@@ -76,10 +77,16 @@ def test_gpu(ra, gpu, shell=False):
 
 	print "  Starting X server..."
 	try:
-		alloc.startViz(ra)
+		alloc.startViz(ra, suppressMessages=(not showMessages))
 	except VizError, e:
-		print >>sys.stderr, "ERROR: Failed to start X server for %s. Please look at /var/log/Xorg.0.log in host %s for reasons."%(identify_gpu(gpu), gpu.getHostName())
+		print >>sys.stderr, "ERROR: Failed to start X server for %s. "%(identify_gpu(gpu), gpu.getHostName())
+		if not showMessages:
+			print >>sys.stderr, "Run this command with the verbose option, -v to see what could be going wrong."
 		return False
+
+	# Avoid cluttering messages
+	if showMessages:
+		time.sleep(5)
 
 	if shell:
 		print "Starting shell ---"
@@ -92,11 +99,6 @@ def test_gpu(ra, gpu, shell=False):
 
 	print "  Stopping X server..."
 	try:
-		alloc.startViz(ra)
-	except VizError, e:
-		pass
-
-	try:
 		alloc.stopViz(ra)
 	except VizError, e:
 		pass
@@ -105,6 +107,10 @@ def test_gpu(ra, gpu, shell=False):
 		ra.deallocate(alloc)
 	except VizError, e:
 		pass
+
+	# Avoid cluttering messages
+	if showMessages:
+		time.sleep(5)
 
 	if (ret == None) or (ret == 0):
 		return True
@@ -118,6 +124,7 @@ You may pass one or node names on the command line to restrict testing to those 
 """,
 usage="vs-test-gpus [node1] [node2] ...")
 parser.add_option('--recursive', dest='recursive', default=False, action="store_true", help="Meant for internal use by the tool")
+parser.add_option('-v', '--verbose', dest='verbose', default=False, action="store_true", help="Show messages; helps you diagnose issues.")
 
 (options, args) = parser.parse_args(sys.argv[1:])
 
@@ -154,7 +161,7 @@ if len(allGPUs)==0:
 	sys.exit(1)
 
 for thisGPU in allGPUs:
-	if test_gpu(ra, thisGPU)!=True:
+	if test_gpu(ra, thisGPU, options.verbose)!=True:
 		print >>sys.stderr
 		print >>sys.stderr, "ERROR - Test failed for %s"%(identify_gpu(thisGPU))
 		print >>sys.stderr
