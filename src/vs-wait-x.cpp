@@ -77,7 +77,7 @@ int main()
 		int ret = select(xfd+1, &rfds, NULL, NULL, NULL);
 		if(ret==1)
 		{
-			cout << "X connection closed" << endl;
+			//cout << "X connection closed" << endl;
 			exit(0);
 		}
 	}

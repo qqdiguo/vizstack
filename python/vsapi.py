@@ -3131,7 +3131,7 @@ class Allocation:
 		resourceAccess.updateServerConfig(self.getId(), serverList)
 		
 				
-	def startViz(self, resourceAccess, timeout=X_WAIT_TIMEOUT):
+	def startViz(self, resourceAccess, timeout=X_WAIT_TIMEOUT, suppressMessages=True):
 		if not isinstance(resourceAccess, ResourceAccess):
 			raise ValueError, "Bad type for argument resourceAccess '%s'. Expected ResourceAccess."%(allocObj.__class__)
 
@@ -3155,7 +3155,7 @@ class Allocation:
 
 		# Start the X servers !
 		for srv in serversToStart:
-			self.xprocs.append(srv.start())
+			self.xprocs.append(srv.start(suppressOutput=suppressMessages, suppressErrors=suppressMessages))
 
 		# Wait for them to start
 		try:
