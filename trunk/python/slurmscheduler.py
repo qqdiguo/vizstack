@@ -92,7 +92,7 @@ class SLURMScheduler(scheduler.Scheduler):
         nodestr = self.condense(res_list)
         try:
             # combine stderr with stdout
-            p = subprocess.Popen(["salloc"]+["--uid=%d"%(userId), "--gid=%d"%(groupId), "-d 4", "--no-shell", "-I"] + self.partition + [ "-w", nodestr], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+            p = subprocess.Popen(["salloc"]+["--uid=%d"%(userId), "-d 4", "--no-shell", "-I"] + self.partition + [ "-w", nodestr], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
             messages = p.communicate()[0]
         except OSError,e :
             raise SLURMError(repr(e))
