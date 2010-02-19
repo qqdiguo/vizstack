@@ -2,6 +2,28 @@
 Hewlett Packard <shreekumar@hp.com>
 v0.5, Sep 2009
 
+== ChangeLog ==
+
+=== Release 1.0-2 ===
+
+Bugfixes and small enhancements on 1.0-1
+
+1. Added : a "-r" parameter to vs-configure-system and vs-configure-standalone. This
+allows specification of a network. The "-m" option is dropped.
+
+2. Added : a "-v" option to vs-test-gpus. This shows startup and error messages, 
+making it easier to diagnose setup issues.
+
+3. Fixed : SLURM support. Scripts now work for users whose uid and gid are not equal.
+
+4. Fixed : Documentation is now consistent with release files.
+
+5. Updated this document with additional setup tests and a "Troubleshooting" section.
+
+=== Release 1.0-1 ===
+
+The first release of VizStack.
+
 == Introduction ==
 
 Most commodity servers and workstations shipping today are capable of hosting 
@@ -466,10 +488,10 @@ traffic, you would need to configure another interface in all the nodes.
 To configure VizStack to use this alternate network, you may use the following 
 command:
 ----
-# /opt/vizstack/sbin/vs-configure-system -m <netmask> -s slurm <list of nodes>
+# /opt/vizstack/sbin/vs-configure-system -r <network> -s slurm <list of nodes>
 ----
 
-Here, <netmask> is the TCPv4 netmask (dotted a.b.c.d) of the alternate network
+Here, <network> is the TCPv4 network (dotted a.b.c.d) of the alternate network
 interfaces (i.e. the ones want to use for remote access).
 
 'vs-configure-system' will detect the number and type of GPUs on all the listed 
@@ -661,6 +683,12 @@ system by providing a list of nodes on the command line.
 
 Currently, this program tests if an X server can be started properly on 
 each GPU. It also checks if OpenGL rendering is setup as expected.
+
+If you encounter failures with vs-test-gpus, then you may use the "-v" 
+flag to get more information about the type of failure. Most failures
+can be easily traced to incorrect setup. If you see any failures here,
+then please refer to the Troubleshooting section of this document for 
+common failures and solutions for them.
 
 === Finding information ===
 
