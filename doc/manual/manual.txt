@@ -150,9 +150,8 @@ You can do this by editing /boot/grub/menu.lst and removing any "vga=" options i
 [[C2_3]]
 === Installing VizStack and Dependent Software ===
 
-VizStack is distributed as a .tar.gz file. One file is provided for each supported platform,
-currently limited to RHEL 5, and SLES 10 SP2.  Each file includes the VizStack RPM, this
-document, as well as any software packages that VizStack needs.
+VizStack is distributed as a .rpm file. One file is provided for each supported platform,
+currently limited to RHEL 5, and SLES 10 SP2. 
 
 ****
 If you have an earlier version of VizStack installed, then be sure to remove it from all 
@@ -249,6 +248,22 @@ use scp for this purpose, as in the example below. The example assumes a cluster
 Finally, restart the Munge daemon (on all the nodes)
 ----
 # service munge restart
+----
+
+Finally, test if munge is working on every node by running the following command on
+each node.
+----
+# munge -n | unmunge 
+----
+
+This command will output the encrypted form of UID and GID credentials.
+
+Verify the munge communication accross the cluster by running the following
+command
+----
+# for node in node1 node2 node3 node4 node5; do
+	munge -n | ssh $node unmunge
+  done;
 ----
 
 [[REF_SLURM]]
@@ -1812,8 +1827,51 @@ needed to achieve each different scenario as well.
 [NOTE]
 ============================================================================
 With this arrangement, the whole 4x2 (called "full-4x2") display cannot be 
-addressed together as a large display.  So using such layouts is not 
+addressed together as a large display.  Using such layouts is not 
 recommended.  However, the whole 4x2 can be used if the user is willing to 
 modify application scripts to address this specific scenario.
 ============================================================================
 
+== Troubleshooting ==
+
+=== SLURM related errors ===
+
+You may face problems if you are using SLURM with VizStack. The cause for these, typically,
+is improper setup.  This section documents common problems, and ways to fix them.
+
+==== "unspecified" error while running user scripts ====
+
+You may see an error message like the following, when you run user scripts (e.g. viz-rgs)
+----
+srun: error: Task launch for <job_id> failed on node <nodename>: Unspecified error
+----
+
+VizStack expects that all users have the same uid and gid across all nodes in the VizStack
+system.  This error is seen when the user running a job does not exist on all the nodes, or
+there is a mismatch in a user's uid/gid between nodes. 
+
+To check this on all nodes, run the id command on all of them as follows
+----
+# for node in node1 node2 node3;
+    do ssh $node id <username>;
+done
+----
+
+The UID and GID of the user should be same on all the nodes.
+
+==== sinfo shows a node marked as "down" ====
+
+There are several reasons why sinfo command shows a node marked in down state.
+
+The most common reason for this is the time is not synchronised on the nodes included in 
+slurm partition.  If SLURM refuses to operate on some or all nodes, and the log files 
+report problems with credentials, then 	execute the following command to confirm that 
+all nodes have the same time.
+----
+# for node in node1 node2 node3 node4;
+    do ssh $node date;
+done
+----
+
+Note that this will yield the right result only if passwordless SSH is setup to the 
+nodes.
