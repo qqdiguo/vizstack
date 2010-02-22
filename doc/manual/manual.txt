@@ -6,19 +6,23 @@ v0.5, Sep 2009
 
 === Release 1.0-2 ===
 
-Bugfixes and small enhancements on 1.0-1
+VizStack 1.0-2 consists of bugfixes and small enhancements over 1.0-1
 
-1. Added : a "-r" parameter to vs-configure-system and vs-configure-standalone. This
-allows specification of a network. The "-m" option is dropped.
+1. Modified : The "-m" option for the scripts vs-configure-system and vs-configure-standalone
+is no longer available. This has been replaced by a "-r" option which allows
+specification of a network value. The "-m" option is dropped.
 
-2. Added : a "-v" option to vs-test-gpus. This shows startup and error messages, 
-making it easier to diagnose setup issues.
+2. Fixed : The configuration commands vs-configure-system and vs-configure-standalone
+now work with nvidia 190 series drivers.
 
 3. Fixed : SLURM support. Scripts now work for users whose uid and gid are not equal.
 
-4. Fixed : Documentation is now consistent with release files.
+4. Added : a "-v" option to vs-test-gpus. This shows startup and error messages, 
+making it easier to diagnose setup issues.
 
-5. Updated this document with additional setup tests and a "Troubleshooting" section.
+5. Fixed : Documentation is now consistent with release files.
+
+6. Updated this document with additional setup tests and a "Troubleshooting" section.
 
 === Release 1.0-1 ===
 
@@ -124,7 +128,8 @@ The steps needed to get VizStack up and running are with your application are
    c. SLURM [<<REF_SLURM>>] or Password-less SSH [<<REF_SSH>>]
 
 3. Install & configure additional software
-   a. RGS or TurboVNC/VirtualGL for remote graphics
+   a. RGS or TurboVNC/VirtualGL for remote graphics. Optionally, install the 
+VizStack Remote Access Tools on user desktop systems.
    b. Application software like ParaView, Avizo, Ensight, and any other software
       you need.
 
@@ -193,6 +198,10 @@ up the environment for proper excecution of the administrative tools as well
 as the user scripts. After you install the VizStack RPM, you will need to 
 *logout* and log back in again before you run any other commands.
 ============================================================================
+
+VizStack also includes the Remote Access Tools. This is meant to be installed on
+end user desktop systems. Pre-compiled binaries are available for Windows and Linux.
+Please see [<<REF_RAT>>] for more information on how to install these.
 
 ==== Installing nVidia Graphics Drivers ====
 
@@ -416,6 +425,20 @@ may help reduce setup effort here. If a user runs the TurboVNC script without ru
 apply to the node where the session is running at, unless you have a shared home directory 
 set up.  Note that this scenario typically occurs in a demo kind of environment rather that 
 in a production environment where you will already have a shared file-system in place.
+
+[[REF_RAT]]
+==== VizStack Remote Access Tools ====
+
+You may want to install VizStack Remote Access Tools if you use Hewlett Packard RGS software
+ or TurboVNC. The Remote Access Tools gives end-users an easy to use graphical user 
+interface to start remote desktop sessions using either of these remote access software. 
+
+For Windows end-users, please download and install VizStackRemoteAccessSetup-v1.0.exe. This 
+is a standard windows installer.
+
+For Linux end-users, please download and install vizrt-1.0-noarch.rpm. This RPM has a few dependencies :
+1. The Paramiko library for SSH (http://www.lang.net/paramiko). Prebuilt packages are available for Red Hat and Fedora, as well as for Ubuntu/Debian.
+2. wxPython 2.8 and above. Prebuilt packages for Red Hat/CentOS are available from RPMforge(http://rpmrepo.org/RPMforge)
 
 ==== ParaView ====
 
