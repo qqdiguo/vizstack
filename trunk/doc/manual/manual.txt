@@ -657,17 +657,17 @@ visualization resources. This is done by executing the following command
 as root from the master machine (the same machine from where you executed
 the configuration command):
 ----
-# /opt/vizstack/bin/vs-ssm start
+# /opt/vizstack/sbin/vs-ssm start
 ----
 
 To stop the SSM service, use
 ----
-# /opt/vizstack/bin/vs-ssm stop
+# /opt/vizstack/sbin/vs-ssm stop
 ----
 
 For debugging purposes, it is also possile to run the SSM in the foreground
 ----
-# /opt/vizstack/bin/vs-ssm nodaemon
+# /opt/vizstack/sbin/vs-ssm nodaemon
 ----
 
 Typically, you would want to setup an init script to handle starting and
