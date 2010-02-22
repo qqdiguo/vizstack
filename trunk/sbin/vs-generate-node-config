@@ -462,8 +462,9 @@ for line in output:
 #(II) NVIDIA(0): NVIDIA GPU Quadro FX 3450/4000 SDI (NV41GL) at PCI:10:0:0
 #(II) NVIDIA(0):     (GPU-0)
 #----------------------------------------------
-# Some driver versions (190 series drivers) add a formatted date just before "NVIDIA" !
-#---------------------------------------------
+#Some driver versions (190 series drivers) add a formatted date just before "NVIDIA" !
+#(II) Feb 22 05:32:44 NVIDIA(0): NVIDIA GPU Quadro FX 5800 (GT200GL) at PCI:65:0:0 (GPU-0)
+#----------------------------------------------
 #
 # We need to match these now!
 # and the magical regular expression is...
