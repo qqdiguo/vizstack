@@ -317,7 +317,7 @@ def __encodeDisplay(displayType, port):
 
 def __set_nvidia_settings(xServer, prop,val):
 	sched = xServer.getSchedulable()
-	cmd = 'nvidia-settings --display=%s -a %s=%s'%(xServer.getDISPLAY(), prop,val)
+	cmd = '/usr/bin/nvidia-settings --display=%s -a %s=%s'%(xServer.getDISPLAY(), prop,val)
 	#print cmd
 	p = sched.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 	p.wait()
@@ -326,7 +326,7 @@ def __set_nvidia_settings(xServer, prop,val):
 def __getGPUDetails(srv, scr, gpuIndex):
 	gpuInfo = {}
 	sched = srv.getSchedulable()
-	cmd = "nvidia-settings --ctrl-display=%s --display=%s -q [gpu:%d]/EnabledDisplays"%(srv.getDISPLAY(), srv.getDISPLAY(), gpuIndex)
+	cmd = "/usr/bin/nvidia-settings --ctrl-display=%s --display=%s -q [gpu:%d]/EnabledDisplays"%(srv.getDISPLAY(), srv.getDISPLAY(), gpuIndex)
 	#print cmd
 	p = sched.run(cmd, stdout=subprocess.PIPE)
 	p.wait()
@@ -337,7 +337,7 @@ def __getGPUDetails(srv, scr, gpuIndex):
 	mobj=reobj.match(l)
 	outputPortInfo = __decodeMonitorMask(int(mobj.groups(0)[0],16))
 	for portNum in outputPortInfo:
-		cmd = "nvidia-settings --ctrl-display=%s --display=%s -q [gpu:%d]/RefreshRate3[%s]"%(srv.getDISPLAY(), srv.getDISPLAY(), gpuIndex, outputPortInfo[portNum]['name'])
+		cmd = "/usr/bin/nvidia-settings --ctrl-display=%s --display=%s -q [gpu:%d]/RefreshRate3[%s]"%(srv.getDISPLAY(), srv.getDISPLAY(), gpuIndex, outputPortInfo[portNum]['name'])
 		p = sched.run(cmd, stdout=subprocess.PIPE)
 		p.wait()
 		content =  p.getStdOut().split('\n')
@@ -347,7 +347,7 @@ def __getGPUDetails(srv, scr, gpuIndex):
 		outputPortInfo[portNum]['RefreshRate']=mobj.groups(0)[0]
 	gpuInfo['ports']=outputPortInfo
 
-	cmd = "nvidia-settings --ctrl-display=%s --display=%s -q [gpu:%d]/FrameLockAvailable"%(srv.getDISPLAY(), srv.getDISPLAY(), gpuIndex)
+	cmd = "/usr/bin/nvidia-settings --ctrl-display=%s --display=%s -q [gpu:%d]/FrameLockAvailable"%(srv.getDISPLAY(), srv.getDISPLAY(), gpuIndex)
 	p = sched.run(cmd, stdout=subprocess.PIPE)
 	p.wait()
 	content =  p.getStdOut().split('\n')
@@ -362,7 +362,7 @@ def __getGPUDetails(srv, scr, gpuIndex):
 
 	gpuInfo['FrameLockAvailable']=mobj.groups(0)[0]
 
-	cmd = "nvidia-settings --ctrl-display=%s --display=%s -q FrameLockSyncRate"%(srv.getDISPLAY(), scr.getDISPLAY())
+	cmd = "/usr/bin/nvidia-settings --ctrl-display=%s --display=%s -q FrameLockSyncRate"%(srv.getDISPLAY(), scr.getDISPLAY())
 	p = sched.run(cmd, stdout=subprocess.PIPE)
 	p.wait()
 	content =  p.getStdOut().split('\n')
@@ -371,7 +371,7 @@ def __getGPUDetails(srv, scr, gpuIndex):
 	mobj=reobj.match(l)
 	gpuInfo['FrameLockSyncRate']=mobj.groups(0)[0]
 
-	cmd = "nvidia-settings --ctrl-display=%s --display=%s -q [gpu:%d]/FrameLockEnable"%(srv.getDISPLAY(), scr.getDISPLAY(),gpuIndex)
+	cmd = "/usr/bin/nvidia-settings --ctrl-display=%s --display=%s -q [gpu:%d]/FrameLockEnable"%(srv.getDISPLAY(), scr.getDISPLAY(),gpuIndex)
 	p = sched.run(cmd, stdout=subprocess.PIPE)
 	p.wait()
 	content =  p.getStdOut().split('\n')
