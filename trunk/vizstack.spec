@@ -1,7 +1,7 @@
 Summary: Software to convert one/more machines with GPUs into a sharable, multi-user, multi-session visualization resource.
 Name: vizstack
 Version: 1.0
-Release: 1
+Release: 2
 License: GPLV2
 Group: Development/Tools
 URL: http://vizstack.sourceforge.net
@@ -54,10 +54,31 @@ chmod +s /opt/vizstack/bin/vs-Xkill
 mkdir -p /var/run/vizstack
 
 %changelog
+* Tue Feb 23 2010 Shree Kumar <shreekumar@hp.com>
+- Updated version string to 1.0-2 for new release
+   - Modified "-m" option in configuration commands
+     to "-r", allowing specification of a network
+   - Fixed failure of configure scripts with nvidia
+     r190 drivers
+   - Fixed SLURM issue when uid!=gid
+   - Fixed documentation, added troubleshooting section
+   - Added ChangeLog section to documentation
+   - Added "-v" for vs-test-gpus. Lets user check for
+     errors.
+   - Fixed "nvidia-settings" command not found when
+     trying to enable framelock from a system without
+     a graphics card. (SLURM specific)
+   - viz-vgl : Starts a local client if allocated
+     GPU is on the same node where the script runs.
+     VGL_CLIENT and VGL_PORT can be used to point the
+     script to a running vglclient.
+
 * Thu Nov 05 2009 Sunil Shinde <sunil.shinde@hp.com>
 - Bumped up the version string to 1.0-1
+
 * Mon Oct 13 2009 Shree Kumar <shreekumar@hp.com>
 - Included vizstack source in vizstack package
+
 * Wed Sep 30 2009 Shree Kumar <shreekumar@hp.com>
 - Bumped version to 0.9-1
    - added vs-test-gpus
