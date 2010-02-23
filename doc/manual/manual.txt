@@ -1,6 +1,6 @@
 = VizStack Manual =
 Hewlett Packard <shreekumar@hp.com>
-v0.5, Sep 2009
+v1.0-2, Sep 2009
 
 == ChangeLog ==
 
@@ -17,12 +17,15 @@ now work with nvidia 190 series drivers.
 
 3. Fixed : SLURM support. Scripts now work for users whose uid and gid are not equal.
 
-4. Added : a "-v" option to vs-test-gpus. This shows startup and error messages, 
+4. Fixed : Framelock related errors from the master node, and if SLURM was
+used as the scheduler.
+
+5. Added : a "-v" option to vs-test-gpus. This shows startup and error messages, 
 making it easier to diagnose setup issues.
 
-5. Fixed : Documentation is now consistent with release files.
+6. Fixed : Documentation is now consistent with release files.
 
-6. Updated this document with additional setup tests and a "Troubleshooting" section.
+7. Updated this document with additional setup tests and a "Troubleshooting" section.
 
 === Release 1.0-1 ===
 
