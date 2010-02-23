@@ -72,7 +72,7 @@ cp -r src/{*.c,*.cpp,*.hpp,*.py,SConstruct,*.txt} /tmp/vizstack-tmp/vizstack-${V
 
 # README
 cp -r doc/README /tmp/vizstack-tmp/vizstack-${VIZSTACK_VERSION}/opt/vizstack/share/doc
-cp -r doc/VizStack-Documentation.pdf /tmp/vizstack-tmp/vizstack-${VIZSTACK_VERSION}/opt/vizstack/share/doc
+cp doc/manual/manual.pdf /tmp/vizstack-tmp/vizstack-${VIZSTACK_VERSION}/opt/vizstack/share/doc/VizStack-Documentation.pdf
 cp -r doc/README /tmp/vizstack-tmp/vizstack-${VIZSTACK_VERSION}/opt/vizstack/
 cp -r COPYING /tmp/vizstack-tmp/vizstack-${VIZSTACK_VERSION}/opt/vizstack/
 
@@ -92,6 +92,12 @@ cd src
 scons
 cd -
 
+# Build the manpages
+# We don't check failure yet
+cd doc/manpages
+make
+cd -
+
 # Copy the built binaries
 cp src/vs-X /tmp/vizstack-tmp/vizstack-${VIZSTACK_VERSION}/usr/X11R6/bin
 cp src/vs-generate-xconfig /tmp/vizstack-tmp/vizstack-${VIZSTACK_VERSION}/opt/vizstack/bin
@@ -103,13 +109,7 @@ cp src/pam_vizstack_rgs_setuser.so /tmp/vizstack-tmp/vizstack-${VIZSTACK_VERSION
 cp src/vs-wait-x /tmp/vizstack-tmp/vizstack-${VIZSTACK_VERSION}/opt/vizstack/bin
 
 # Generate the man pages if asciidoc has been installed
-if [ -f /usr/bin/a2x ]; then
-    a2x -f manpage -d manpage doc/manpages/viz-avizovr.txt -D /tmp/vizstack-tmp/vizstack-${VIZSTACK_VERSION}/opt/vizstack/man/man1
-    a2x -f manpage -d manpage doc/manpages/viz-rgs.txt -D /tmp/vizstack-tmp/vizstack-${VIZSTACK_VERSION}/opt/vizstack/man/man1
-    a2x -f manpage -d manpage doc/manpages/viz-tvnc.txt -D /tmp/vizstack-tmp/vizstack-${VIZSTACK_VERSION}/opt/vizstack/man/man1
-    a2x -f manpage -d manpage doc/manpages/viz-vgl.txt -D /tmp/vizstack-tmp/vizstack-${VIZSTACK_VERSION}/opt/vizstack/man/man1
-    a2x -f manpage -d manpage doc/manpages/viz-paraview.txt -D /tmp/vizstack-tmp/vizstack-${VIZSTACK_VERSION}/opt/vizstack/man/man1
-fi
+cp doc/manpages/*.1 /tmp/vizstack-tmp/vizstack-${VIZSTACK_VERSION}/opt/vizstack/man/man1
 
 # Vizconn stuff
 rm -Rf /tmp/vizrt-tmp/vizrt-${VIZRT_VERSION}
