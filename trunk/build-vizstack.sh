@@ -134,7 +134,13 @@ pushd /tmp/vizstack-tmp
 tar -zcvf vizstack-${VIZSTACK_VERSION}.tar.gz vizstack-${VIZSTACK_VERSION}
 cp vizstack-${VIZSTACK_VERSION}.tar.gz ${RPM_PATH}/SOURCES
 rpmbuild -ba ${RPM_PATH}/SPECS/vizstack.spec
-
+if [ "$?" -ne "0" ]
+then
+	echo "================================"
+	echo "FATAL: VizStack RPM Build failed"
+	echo "================================"
+	exit -1
+fi
 popd
 
 # Build the vizrt rpm also
@@ -143,5 +149,11 @@ pushd /tmp/vizrt-tmp
 tar -zcvf vizrt-${VIZRT_VERSION}.tar.gz vizrt-${VIZRT_VERSION}
 cp vizrt-${VIZRT_VERSION}.tar.gz ${RPM_PATH}/SOURCES
 rpmbuild -ba ${RPM_PATH}/SPECS/vizrt.spec
-
+if [ "$?" -ne "0" ]
+then
+	echo "============================="
+	echo "FATAL: vizrt RPM Build failed"
+	echo "============================="
+	exit -1
+fi
 popd
