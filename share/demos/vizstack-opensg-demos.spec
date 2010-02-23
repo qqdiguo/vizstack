@@ -1,7 +1,7 @@
 Summary: HP Visualization Stack
 Name: vizstack-opensg-demos
 Version: 1.0
-Release: 1
+Release: 2
 License: GPLV2
 Group: Development/Tools
 URL: http://www.hp.com/go/visualization
@@ -41,6 +41,9 @@ rm -rf $RPM_BUILD_ROOT
 %post
 
 %changelog
+* Tue Feb 23 2010 Sunil Shinde <shreekumar@hp.com>
+- Bumped up the version string to 1.0-2
+
 * Thu Nov 05 2009 Sunil Shinde <sunil.shinde@hp.com>
 - Bumped up the version string to 1.0-1
 
