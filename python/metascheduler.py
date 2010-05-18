@@ -941,7 +941,7 @@ class Metascheduler:
 
 			# Return the node with lower index if all else fails. This
 			# gives a consistent & predictable order of allocation.
-			return self.node1.getIndex()-self.node2.getIndex()
+			return node1.getIndex()-node2.getIndex()
 			
 		# Sort nodes with lower weights coming first
 		resList.sort(sortFunc)
