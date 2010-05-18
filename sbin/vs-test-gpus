@@ -107,7 +107,7 @@ def test_gpu(ra, gpu, showMessages=False, shell=False):
 		os.system("bash")
 		print "Out of shell ---"
 
-	proc = scr.run("%s %s"%(sys.argv[0],"--recursive"))
+	proc = scr.run([sys.argv[0], "--recursive"])
 	proc.wait()
 	ret = proc.getExitCode()
 
