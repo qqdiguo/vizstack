@@ -1,28 +1,39 @@
 #
-# Makefile for use in Shree's VM
-# This has Ubuntu 8.10 running, a locally installed JRE
-#
 # Asciidoc is configured to use docbook as the default backend in Ubuntu
 # So forcing FOP is a little bit of a hack.
 #
+# In the directory images, you may need to run a command like
 #
-# If you get failures w.r.t finding image files, 
-# then ensure that the images needed for the document are available
+#  ln -s /usr/share/doc/asciidoc/doc/images/icons/ icons
 #
-# E.g., on Ubuntu I use :
-#   ln -s /usr/share/asciidoc/images/ image
-# and then
-#   make
- 
-ALL: fop
-	@echo "Built FOP by default. You may choose fop/docbook/html"
+# before building the documentation.
+#
+ALL: showdefault fop
+
+showdefault:
+	@echo "=================================================="
+	@echo "Defaulting to FOP. You may choose fop/docbook/html"
+	@echo "=================================================="
 
 fop:
-	env JAVA_HOME=/home/shree/jre1.6.0_16/ PATH=/home/shree/jre1.6.0_16/bin:${PATH} a2x  --icons -d book -f pdf --fop "" manual.txt
+	a2x --icons -d book -f pdf --fop admin_guide.txt
+	a2x --icons -d book -f pdf --fop user_guide.txt
+	a2x --icons -d book -f pdf --fop dev_guide.txt
 
 docbook:
-	a2x  --icons -d book -f pdf manual.txt
+	a2x  --icons -d book -f pdf admin_guide.txt
+	a2x  --icons -d book -f pdf user_guide.txt
+	a2x  --icons -d book -f pdf dev_guide.txt
 
-html:
-	a2x  --icons -d book -f xhtml manual.txt
+html: admin_guide.html user_guide.html dev_guide.html
+
+admin_guide.html : admin_guide.txt
+	a2x --icons -d book -f xhtml -a toc admin_guide.txt
+
+user_guide.html : user_guide.txt
+	a2x --icons -d book -f xhtml -a toc user_guide.txt
+
+dev_guide.html : dev_guide.txt
+	#a2x --icons -d book -f xhtml -a toc -v dev_guide.txt #-- not used since source highlighting is not working with this.
+	asciidoc -a toc dev_guide.txt
 

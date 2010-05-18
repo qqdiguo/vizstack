@@ -37,7 +37,9 @@ import subprocess
 import copy
 import string
 from sets import Set
-
+import vsutil
+import calendar
+import time
 
 class OptionParser (optparse.OptionParser):
 	def check_required (self, opt):
@@ -141,6 +143,7 @@ def getResource(name, nameRGList):
 def getFreeBusyResources(allocationList, nameRGList):
 	nameResources = {}
 	allRGs = resAccess.queryResources(vsapi.ResourceGroup())
+	allRGs = map(lambda x:vsutil.normalizeRG(x), allRGs)
 	# From the list of all available resources
 	# create a dict with the key as the tiled display name and the value as the
 	# set of resources in the format [(gpu_index, hostname), (gpu_index, hostname)...]
@@ -168,12 +171,12 @@ def getFreeBusyResources(allocationList, nameRGList):
 	# the list (gpu_index, hostname) tuples as the value.
 	# Convert the list to a Set for easier processing
 	for allocation in allocationList:
-		resources = allocation[2]
+		resources = allocation['resources']
 		gpuHostList = []
 		for res in resources:
 			if res.__class__ == vsapi.GPU:
 				gpuHostList.append((res.getIndex(), res.getHostName()))
-		userNameRes[allocation[1]] = Set(gpuHostList)
+		userNameRes[allocation['user']] = Set(gpuHostList)
 
 	# The code that generates the tables that get printed
 	# Go through the set of all the resources
@@ -205,13 +208,16 @@ def getFreeBusyResources(allocationList, nameRGList):
 					for resList in rg.getResources():
 						for res in resList:
 							if isinstance(res, vsapi.Server):
-								resourceString += res.getHostName()
+								if res.getHostName() is not None:
+									resourceString += res.getHostName()
+								else:
+									resourceString += "<undefined host>"
 						for res in resList:
 							if isinstance(res, vsapi.GPU):
 								resourceString += " GPU-%d"%(res.getIndex())
-								if res != resList[-1]:
+								if res is not resList[-1]:
 									resourceString += " and"
-						if not resList == rg.getResources()[-1]:
+						if resList is not rg.getResources()[-1]:
 							resourceString = resourceString.rstrip(" and")
 							resourceString += ", "
 					freeRGTable.append([rg.getName(), resourceString])
@@ -232,17 +238,20 @@ def createRGList(allRGs):
 				hostName = ""
 				for res in resList:
 					if isinstance(res, vsapi.Server):
-						resourceString += res.getHostName()
+						if res.getHostName() is not None:
+							resourceString += res.getHostName()
+						else:
+							resourceString += "<undefined host>"
 
 				for res in resList:
 					if isinstance(res, vsapi.GPU):
 						resourceString += " GPU-%d"%(res.getIndex())
-						if res != resList[-1]:
+						if res is not resList[-1]:
 							resourceString += " and"
-				if not resList == rg.getResources()[-1]:
+				if resList is not rg.getResources()[-1]:
 					resourceString = resourceString.rstrip(" and")
 					resourceString += ", "
-			allRGList.append([rg.getName(), resourceString])
+			allRGList.append([rg.getName(), resourceString, rg.getDescription()])
 	return allRGList
 
 def printResources(resAccess):
@@ -257,13 +266,13 @@ def printResources(resAccess):
 		if len(normalServers)>0:
 			print "  X Servers         :",
 			for srv in normalServers:
-				print "%d "%(srv.getIndex()),
+				print "%2d "%(srv.getIndex()),
 			print
 		virtualServers = filter(lambda x: x.getType()=='virtual', allServers)
 		if len(virtualServers)>0:
 			print "  Virtual X Servers :",
 			for srv in virtualServers:
-				print "%d "%(srv.getIndex()),
+				print "%2d "%(srv.getIndex()),
 			print
 		gpus = vsapi.extractObjects(vsapi.GPU, allRes)
 		if len(gpus)>0:
@@ -273,7 +282,11 @@ def printResources(resAccess):
 					scanStr = ""
 				else:
 					scanStr = " (no display capability)"
-				print "    %d, type %s%s"%(gpu.getIndex(), gpu.getType(), scanStr)
+				if gpu.isSharable():
+					shareStr = " sharable by %d users via X server :%d"%(gpu.getShareLimit(), gpu.getSharedServerIndex())
+				else:
+					shareStr = ""
+				print "    %d, type '%s'%s%s"%(gpu.getIndex(), gpu.getType(), scanStr, shareStr)
 		slis = vsapi.extractObjects(vsapi.SLI, allRes)
 		if len(slis)>0:
 			print "  SLI bridges :"
@@ -313,6 +326,7 @@ if __name__ == "__main__":
 	allocationList = resAccess.getAllocationList()
 
 	allRGs = resAccess.queryResources(vsapi.ResourceGroup())
+	allRGs = map(lambda x:vsutil.normalizeRG(x), allRGs)
 	allRGList = createRGList(allRGs)
 	nameRGList = []
 	for rg in allRGs:
@@ -320,7 +334,7 @@ if __name__ == "__main__":
 		if(isinstance(rg.getHandlerObject(), vsapi.TiledDisplay)):
 			nameRGList.append([rg.getName(), rg.getResources()])
 	if (options.all_resources):
-		printTable(allRGList,["Name", "Resources"], expandFuncCol=None, expandFunc=None)
+		printTable(allRGList,["Name", "Resources", "Description"], expandFuncCol=None, expandFunc=None)
 	elif(options.free or options.busy):
 		(freeRGTable, busyRGTable) = getFreeBusyResources(allocationList, nameRGList)
 		if(options.free):
@@ -330,4 +344,20 @@ if __name__ == "__main__":
 	elif options.show_resources:
 		printResources(resAccess)
 	else:
-		printTable(allocationList, ["Id","Name","Resources"], expandFuncCol=2, expandFunc=expandResources)
+		def jobRunTime(secsSinceEpoch):
+			totalSecs = (calendar.timegm(time.gmtime())-secsSinceEpoch)
+			secs = totalSecs%60
+			totalSecs -= secs
+			min = ((totalSecs)/60)%60
+			totalSecs -= (min*60)
+			hours = (totalSecs/60)%60
+			totalSecs -= (hours*3600)
+			days = totalSecs/(60*60*24)
+			rts = ''
+			if days>0:
+				rts = '%dd '%(days)
+			rts +='%02d:%02d:%02d'%(hours,min,secs)
+			return rts
+		
+		printList = map(lambda x:[x['allocId'],x['user'],jobRunTime(x['startTime']),x['appName'], x['resources']], allocationList)
+		printTable(printList, ["Id","User","Run Time", "Application", "Resources"], expandFuncCol=4, expandFunc=expandResources)

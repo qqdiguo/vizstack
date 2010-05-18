@@ -54,7 +54,7 @@ pprint(resources)
 srv = resources[0][0]
 gpu = resources[0][1]
 
-ddName = "LP2065"
+ddName = "HP LP2065"
 # Create an monitor. This only gets information about the
 # needed type of display device
 #

@@ -42,7 +42,7 @@ srv = resources[0][0]
 gpu0 = resources[0][1]
 gpu1 = resources[0][2]
 
-ddName = "LP2065"
+ddName = "HP LP2065"
 
 # Get information  corresponding to an LP2065 monitor
 # NOTE: on success, we'll get a list with 1 element, and we

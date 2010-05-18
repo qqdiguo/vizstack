@@ -5,6 +5,6 @@
  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
  xsi:schemaLocation="http://www.hp.com /opt/vizstack/share/schema/keyboardconfig.xsd">
 
-		<name>USBKeyboard</name>
+		<type>USBKeyboard</type>
 		<driver>evdev</driver>
 </keyboard>

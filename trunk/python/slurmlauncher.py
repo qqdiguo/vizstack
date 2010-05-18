@@ -26,6 +26,7 @@ import slurmscheduler
 import localscheduler
 import domutil
 import time
+import copy
 
 class SLURMLauncher(launcher.Launcher):
 
@@ -89,18 +90,16 @@ class SLURMLauncher(launcher.Launcher):
     def getSchedId(self):
         return self.schedId
 
-    def run(self, cmd, node, thisStdin=None, thisStdout=None, thisStderr=None, launcherEnv=None):
+    def run(self, args, node, inFile=None, outFile=None, errFile=None, launcherEnv=None):
         slots = 1
         op_options = ""
 
-        srun_cmd = "srun"
-        srun_args = "--jobid=%d -w %s -N1 %s"%(self.schedId, node, cmd)
-        cmd_list = srun_args.split(" ")
-        cmd_list = filter(lambda x: len(x)>0, cmd_list) # trim extra spaces
+	cmd_args = copy.copy(args)
+	cmd_args = ["srun", "--jobid=%d"%(self.schedId), "-w", node, "-N1"]+cmd_args
         try:
             # NOTE: set close_fds = True as we don't want the child to inherit our FDs and then 
             # choke other things ! e.g. the SSM will not clean up a connection if close_fds is not set to True
-            p = subprocess.Popen([srun_cmd]+cmd_list, stdout=thisStdout, stderr=thisStderr, stdin=thisStdin, close_fds=True, env=launcherEnv)
+            p = subprocess.Popen(cmd_args, stdin=inFile, stdout=outFile, stderr=errFile, close_fds=True, env=launcherEnv)
         except OSError:
                 return None
 

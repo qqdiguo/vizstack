@@ -329,7 +329,7 @@ if __name__ == "__main__":
 	# Start desktop with RGS enabled X server.
 	# Output & Error messages are redirected to /dev/null
 	sched = gpu.getSchedulable()
-	rgsProc = sched.run("/opt/vizstack/bin/vs-aew startx -- /usr/X11R6/bin/vs-X %s"%(xServer.getDISPLAY()), stdout=open("/dev/null"), stderr=open("/dev/null"))
+	rgsProc = sched.run(["startx", "--", "/usr/X11R6/bin/vs-X", xServer.getDISPLAY()], outFile=open("/dev/null"), errFile=open("/dev/null"))
 
 	# Wait for the X server to come up
 	ra.waitXState(alloc, 1, vsapi.X_WAIT_TIMEOUT, [xServer])

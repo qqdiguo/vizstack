@@ -18,27 +18,38 @@
 
 import os
 
+use_libxml = 1
+
+if use_libxml:
+	domlibs = ['xml2']
+	domdef = 'DOM_USE_LIBXML'
+else:
+	domlibs = ['xerces-c']
+	domdef = 'DOM_USE_XERCES'
+
 env = Environment(
   CXXFLAGS=['-g'],
-  LIBPATH=['%s/install/lib'%(os.environ['HOME'])],
-  CPPPATH=['%s/install/include'%(os.environ['HOME'])])
+  CPPDEFINES=[domdef],
+  LIBPATH=['%s/install/lib'%(os.environ['HOME']),'/usr/X11R6/lib64','/usr/X11R6/lib'],
+  CPPPATH=['%s/install/include'%(os.environ['HOME']), '/usr/include/libxml2'])
 
 vsdom = env.Object('vsdomparser.cpp')
+vscommon = env.Object('vscommon.cpp')
 
 env.Program(
   target='vs-generate-xconfig',
-  source=['vs-generate-xconfig.cpp',vsdom],
-  LIBS=['xerces-c'])
+  source=['vs-generate-xconfig.cpp',vsdom, vscommon],
+  LIBS=domlibs)
 
 env.Program(
   target='vs-X',
-  source=['vs-X.cpp',vsdom],
-  LIBS=['xerces-c'])
+  source=['vs-X.cpp',vsdom, vscommon],
+  LIBS=domlibs)
 
 env.Program(
   target='vs-Xv',
-  source=['vs-Xv.cpp',vsdom],
-  LIBS=['xerces-c'])
+  source=['vs-Xv.cpp',vsdom, vscommon],
+  LIBS=domlibs)
 
 env.Program(
   target='vs-aew',
@@ -54,6 +65,7 @@ env.Program(
 
 env.Program('vs-wait-x.cpp', LIBS=['X11'])
 
+env.Program('vs-get-limits.cpp', LIBS=['X11','GL'])
 #env.Program(
 #  target='vs-identify-display',
 #  source=['vs-identify-display.cpp'],

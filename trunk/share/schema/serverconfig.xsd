@@ -4,9 +4,18 @@ targetNamespace="http://www.hp.com"
 xmlns="http://www.hp.com"
 elementFormDefault="qualified" >
 
-<xs:element name="serverconfig">
+<xs:element name="server">
 	<xs:complexType>
 		<xs:sequence>
+			<!-- Multiple "owner"s can exist for this server. More than one owner implies sharing -->
+			<xs:element name="owner" minOccurs="0" maxOccurs="unbounded" type="xs:string" />
+
+			<!-- Maximum number of users this X server can be shared with -->
+			<xs:element name="maxShareCount" minOccurs="0" maxOccurs="1" type="xs:nonNegativeInteger" />
+
+			<!-- Is this server running shared or non shared ? -->
+			<xs:element name="shared" minOccurs="0" maxOccurs="1" type="xs:boolean" />
+
 			<!-- The hostname where the server is valid. -->
 			<xs:element name="hostname" minOccurs="0" maxOccurs="1" type="xs:string" />
 
@@ -22,9 +31,6 @@ elementFormDefault="qualified" >
 					</xs:restriction>
 				</xs:simpleType>
 			</xs:element>
-
-			<!-- One "owner" can exist for this server. -->
-			<xs:element name="owner" minOccurs="0" maxOccurs="1" type="xs:string" />
 
 			<!-- Command line options to the server specified first -->
 			<xs:element name="x_cmdline_arg" minOccurs="0" maxOccurs="unbounded">

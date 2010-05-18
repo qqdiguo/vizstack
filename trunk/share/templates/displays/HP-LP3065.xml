@@ -8,14 +8,24 @@ The LP 3065 supports resolutions upto 2560x1600 @ 60Hz.
 
 -->
 
-<displayconfig 
+<display
  xmlns="http://www.hp.com"
  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
  xsi:schemaLocation="http://www.hp.com /opt/vizstack/share/schema/displayconfig.xsd" >
-	<model>LP3065</model>
-	<vendor>HP</vendor>
+	<model>HP LP3065</model>
 	<input>digital</input>
 	<edid>/opt/vizstack/share/templates/displays/edids/HP-LP3065.bin</edid>
+	<edid_name>HP LP3065</edid_name>
+	<dimensions>
+		<width>640</width> <!-- you get this from the "Maximum Image" size on the EDID -->
+		<height>400</height>
+		<bezel><!-- Quickspecs says overall size is 692 x 455 -->
+			<left>26</left> 
+			<right>26</right>
+			<bottom>27.5</bottom>
+			<top>27.5</top>
+		</bezel>
+	</dimensions>
 	<default_mode>2560x1600_60</default_mode>
 	<mode>
 		<type>edid</type>
@@ -33,4 +43,4 @@ The LP 3065 supports resolutions upto 2560x1600 @ 60Hz.
 		<height>800</height>
 		<refresh>60</refresh>
 	</mode>
-</displayconfig>
+</display>

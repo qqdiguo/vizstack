@@ -31,6 +31,7 @@ import os
 import subprocess
 import process
 import socket
+import copy
 
 class SSHReservation(Launcher):
 
@@ -69,15 +70,15 @@ class SSHReservation(Launcher):
 				self.sched.deallocate(self)
 		self.sched = None
 
-	def run(self, cmd, node, inFile=None, outFile=None, errFile=None, launcherEnv=None):
+	def run(self, args, node, inFile=None, outFile=None, errFile=None, launcherEnv=None):
 		# Use the VizStack application execution wrapper to ensure cleanup when SSH
 		# exits
-		cmd_list = filter(lambda x: len(x)>0, cmd.split(" ")) # trim extra spaces
-		space_split_cmd = [ 'ssh' , node, '/opt/vizstack/bin/vs-aew' ] + cmd_list
+		cmd_list = copy.copy(args)
+		cmd_list = [ 'ssh' , node, '/opt/vizstack/bin/vs-aew' ] + cmd_list
 
 		# NOTE: close_fds = True as we don't want the child to inherit our FDs and then 
 		# choke other things ! e.g. the SSM will not clean up a connection if close_fds is not set to True
-		proc = subprocess.Popen(space_split_cmd, stdout=outFile, stderr=errFile, stdin=inFile, close_fds=True, env=launcherEnv)
+		proc = subprocess.Popen(cmd_list, stdout=outFile, stderr=errFile, stdin=inFile, close_fds=True, env=launcherEnv)
 		return VizProcess(proc)
 
 	def serializeToXML(self):

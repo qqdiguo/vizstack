@@ -36,6 +36,7 @@ import os
 import subprocess
 import process
 import socket
+import copy
 
 class VizProcess(process.Process):
     	def __init__(self, proc):
@@ -55,6 +56,9 @@ class VizProcess(process.Process):
 			pass
 		self.retCode = self.proc.returncode
 		self.proc = None
+
+	def getSubprocessObject(self):
+		return self.proc
 
 	def getStdOut(self):
 		return self.savedStdOut
@@ -109,15 +113,20 @@ class LocalReservation(Launcher):
 				self.sched.deallocate(self)
 		self.sched = None
 
-	def run(self, cmd, node, inFile=None, outFile=None, errFile=None, launcherEnv=None):
+	def run(self, args, node, inFile=None, outFile=None, errFile=None, launcherEnv=None):
 		if node not in ["localhost"]:
 			if node != socket.gethostname():
 				# FIXME: raise the right type of error - please !
 				raise "You are limited to run commands on the localnode (localhost) when using this scheduler"
-		cmd_list = filter(lambda x: len(x)>0, cmd.split(" ")) # trim extra spaces
+		cmd_list = copy.copy(args)
+
+		# Use the aew to prevent leftover proceses. Use "-ignorestdin" to prevent stdin processing from 
+		# the app execution wrapper. This aids proper cleanup.
+		cmd_list = ["/opt/vizstack/bin/vs-aew", "-ignorestdin"] + cmd_list
 
 		# NOTE: close_fds = True as we don't want the child to inherit our FDs and then 
 		# choke other things ! e.g. the SSM will not clean up a connection if close_fds is not set to True
+		
 		proc = subprocess.Popen(cmd_list, stdout=outFile, stderr=errFile, stdin=inFile, close_fds=True, env=launcherEnv)
 		return VizProcess(proc)
 

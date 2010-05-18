@@ -81,8 +81,8 @@ class SSHConnector(Connector):
 		try:
 			sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 			sock.connect((hostname, 22))
-		except socket.exception, e:
-			raise ConnectorError(str(e))
+		except socket.error, e:
+			raise ConnectorError("Failed to connect to host %s. Reason:%s"%(hostname, str(e)))
 
 		self.sock = sock
 

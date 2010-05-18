@@ -17,45 +17,50 @@
 # along with this program; if not, write to the Free Software
 # Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
-# Import vsapi
 import vsapi
 
-# Connect to SSM
-ra = vsapi.ResourceAccess()
-alloc = ra.allocate([
-           [vsapi.Server(), vsapi.GPU()]
-        ])
+# Connect to the SSM
+ra = vsapi.ResourceAccess() 
 
-# Find the Server & GPU allocated to us
-# Allocated resources follow the input order
+# Allocate a GPU and a Server on the same node
+alloc = ra.allocate([ [vsapi.GPU(), vsapi.Server()] ])
 res = alloc.getResources()
-srv = res[0][0]
-gpu = res[0][1]
+gpu = res[0][0]
+srv = res[0][1]
 
-# Setup the server with a screen containing
-# the GPU
-scr = vsapi.Screen(0)
-scr.setFBProperty('resolution', [1000,1000])
-scr.setGPU(gpu)
-srv.addScreen(scr)
+screen = vsapi.Screen(0)
 
-# Propagate the server configuration to the
-# SSM
+# Setup the X screen
+if gpu.getAllowNoScanOut():
+	gpu.clearScanouts()
+	screen.setFBProperty('resolution', [1280,1024])
+else:
+	if len(gpu.getScanouts())==0:
+		sc = gpu.getScanoutCaps()
+		gpu.setScanout(0, 'HP LP2065', sc[0][0])
+
+# X screen controls the allocated GPU
+screen.setGPU(gpu)
+
+# Configure the screen on our allocated server
+srv.addScreen(screen)
+
+# Configure X server - this propagates the X server
+# configuration to the SSM
 alloc.setupViz(ra)
 
-# Start the X server
+# Start X server
 alloc.startViz(ra)
 
-# Run xwininfo on it & wait till it exits
-proc = scr.run('xwininfo -root')
+# Run glxinfo on the server
+proc = srv.run(['glxinfo'])
 proc.wait()
 
-# Stop the X server
+# Stop the X servers
 alloc.stopViz(ra)
 
-# Give up the resources
+# Give up the resources we are using
 ra.deallocate(alloc)
 
 # Disconnect from the SSM
 ra.stop()
-

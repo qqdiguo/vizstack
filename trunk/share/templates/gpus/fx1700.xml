@@ -6,9 +6,7 @@
  xsi:schemaLocation="http://www.hp.com /opt/vizstack/share/schema/gpuconfig.xsd">
 
 		<model>Quadro FX 1700</model>
-		<vendor>nVidia</vendor>
-		<pci_device_id>0040</pci_device_id>
-		<pci_vendor_id>10de</pci_vendor_id>
+		<vendor>NVIDIA Corporation</vendor>
 		<scanout_caps>
 			<index>0</index>
 			<type>digital</type>

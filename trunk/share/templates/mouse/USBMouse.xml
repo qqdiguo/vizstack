@@ -5,7 +5,7 @@
  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
  xsi:schemaLocation="http://www.hp.com /opt/vizstack/share/schema/mouseconfig.xsd">
 
-		<name>USBMouse</name>
+		<type>USBMouse</type>
 		<driver>mouse</driver>
 		<option>
 			<name>Protocol</name>

@@ -14,14 +14,14 @@ valid modes, though one may not be interested in running at anything less than
 FIXME: add the stereo modes here.
 -->
 
-<displayconfig 
+<display
  xmlns="http://www.hp.com"
  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
  xsi:schemaLocation="http://www.hp.com /opt/vizstack/share/schema/displayconfig.xsd" >
-	<model>SRX</model>
-	<vendor>Sony</vendor>
+	<model>Sony SRX PJ</model>
 	<input>digital</input>
 	<edid>/opt/vizstack/share/templates/displays/edids/Sony-SRX-PJ.bin</edid>
+	<edid_name>Sony SRX PJ</edid_name>
 	<default_mode>2048x1080_60</default_mode>
 	<mode>
 		<type>edid</type> 
@@ -73,4 +73,4 @@ FIXME: add the stereo modes here.
 		<height>768</height>
 		<refresh>60</refresh>
 	</mode>
-</displayconfig>
+</display>

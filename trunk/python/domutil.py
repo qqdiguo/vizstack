@@ -16,14 +16,15 @@
 # You should have received a copy of the GNU General Public License
 # along with this program; if not, write to the Free Software
 # Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+import xml
+from xml.dom import minidom
 
-
-"""
-Returns the first child node of the passed node with the given node name.
-This will typically be used if the node has exactly one node of the
-given name.
-"""
 def getChildNode(node, name):
+	"""
+	Returns the first child node of the passed node with the given node name.
+	This will typically be used if the node has exactly one node of the
+	given name.
+	"""
 	if node.childNodes is None:
 		return None
 	for n in node.childNodes:
@@ -31,10 +32,10 @@ def getChildNode(node, name):
 			return n
 	return None
 
-"""
-Returns all child nodes of the passed node with the given node name.
-"""
 def getChildNodes(node, name):
+	"""
+	Returns all child nodes of the passed node with the given node name.
+	"""
 	ret = []
 	if node.childNodes is None:
 		return ret
@@ -43,10 +44,10 @@ def getChildNodes(node, name):
 			ret.append(n)
 	return ret
 
-"""
-Return all ELEMENT_NODE children of a node
-"""
 def getAllChildNodes(node):
+	"""
+	Return all ELEMENT_NODE children of a node
+	"""
 	ret = []
 	if node.childNodes is None:
 		return ret
@@ -60,3 +61,6 @@ def getValue(node):
 	# ideally we want to support unicode.
 	return node.firstChild.nodeValue.encode('iso-8859-1')
 
+def parseString(msg):
+	doc = xml.dom.minidom.parseString(msg)
+	return doc.documentElement

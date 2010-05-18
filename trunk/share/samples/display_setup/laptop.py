@@ -37,7 +37,7 @@ gpu = resources[0][1]
 kbd = resources[0][2]
 mouse = resources[0][3]
 
-ddName = "LPL"
+ddName = "HP DV2000"
 # Create an monitor. This only gets information about the
 # needed type of display device
 #
@@ -69,7 +69,7 @@ alloc.setupViz(ra)
 # Start X Server
 alloc.startViz(ra)
 
-desktop = scr.run("gnome-session")
+desktop = scr.run(["gnome-session"])
 desktop.wait()
 
 # Stop the X servers

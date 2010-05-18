@@ -1,33 +1,108 @@
-= VizStack Manual =
+= VizStack Admin Guide =
 Hewlett Packard <shreekumar@hp.com>
-v1.0-2, Sep 2009
+v1.1-2, May 2010
 
-== ChangeLog ==
+== Important Information ==
+
+=== Intended Audience ===
+
+This document is written for use by system administrators. If you want to install or
+configure VizStack, then you need to read this document.
+
+=== Copyright ===
+
+This document is (c) 2009-2010 Hewlett-Packard Development Company, L.P.
+
+=== Trademarks and Attributions ===
+
+OpenGL is a registered trademark of Silicon Graphics, Inc. Linux is a registered
+trademark of Linus Torvalds. CUDA is a trademark of NVIDIA Corporation. All other
+trademarks and copyrights herein are the property of their respective owners.
+
+=== Feedback ===
+
+If you have any comments about this document, please send email to vizstack-users AT 
+lists.sourceforge.net.
+
+== Document History ==
+
+=== Release 1.1-2 ===
+
+VizStack 1.1 adds a very important feature : GPU sharing. This feature allows more than
+one user to share a GPU. Typically, this will be used to host more than one remote graphics
+session on a single GPU using TurboVNC/VirtualGL.
+
+VizStack 1.1 includes all the functionality of Release 1.0-2, and the following changes
+
+* Added : GPU sharing. Options -S, -i, -x to the configuration commands vs-configure-system and 
+vs-configure-standalone allow the administrator to configure GPU sharing.
+
+* Added : Node specific weights. These allow you to control the order in which VizStack
+choose resources from nodes.
+
+* Modified : File format of /etc/vizstack/node_config.xml has been changed. If you are
+updating from an earlier release of VizStack, then you will need to run the configuration
+script again. Else, the SSM will refuse to start
+
+* Modified : File format of /etc/vizstack/resource_group_config.xml has been changed. If you 
+had defined any tiled displays earlier, then please remove this configuration file and 
+recreate the tiled displays again.
+
+* Modified : File formats for GPUs and Display Device templates have changed. If you 
+had defined any GPUs and display devices for your site, then you will need to tweak the
+templates to follow the current format.
+
+* Added : A -x option to viz-tvnc and viz-vgl. This allows users to allocate exclusive GPUs. 
+This would typically be used for applications that stress the GPU, or for benchmarking purposes.
+
+* Added : A -N option to viz-tvnc and viz-vgl. This allows users to allocate whole nodes.
+This would typically be used for applications that stress the whole system(as opposed to a single
+GPU), or when users want to run applications which take up all the resources on a node.
+
+* Modified : viz-tvnc and viz-vgl scripts allocate shared GPUs by default. If no shared GPUs
+are available, then they will fail, unless -x or -N are used.
+
+* Added : The SSM uses Python's logging package to log messages. The logs are
+captured in the file /var/log/vs-ssm.log. Logging can be configured by editing
+the file /etc/vizstack/ssm-logging.conf
+
+* Added : It is possible to configure bezels on monitors. Some of the supplied display
+devices come with their bezels defined in the display template.
+
+* Modified : The vs-manage-tiled-displays tool now lets you specify the display remapping
+for GPUs, as well as specify whether to enable framelock on the tiled display.
+
+* Modified : The configure scripts in earlier versions used to bail out if unrecognized
+GPUs were in a system. Same for display devices. This release creates templates for 
+unrecognized GPUs and display devices(provided they are detected).
+
+* Documentation : Split the older manual into an administrator guide, and a user guide.
+The documentation covers more areas of VizStack with this release.
 
 === Release 1.0-2 ===
 
 VizStack 1.0-2 consists of bugfixes and small enhancements over 1.0-1
 
-1. Modified : The "-m" option for the scripts vs-configure-system and vs-configure-standalone
+* Modified : The "-m" option for the scripts vs-configure-system and vs-configure-standalone
 is no longer available. This has been replaced by a "-r" option which allows
 specification of a network value. The "-m" option is dropped.
 
-2. Fixed : The configuration commands vs-configure-system and vs-configure-standalone
+* Fixed : The configuration commands vs-configure-system and vs-configure-standalone
 now work with nvidia 190 series drivers.
 
-3. Fixed : SLURM support. Scripts now work for users whose uid and gid are not equal.
+* Fixed : SLURM support. Scripts now work for users whose uid and gid are not equal.
 
-4. Fixed : Framelock related errors from the master node, and if SLURM was
+* Fixed : Framelock related errors from the master node, and if SLURM was
 used as the scheduler.
 
-5. Added : a "-v" option to vs-test-gpus. This shows startup and error messages, 
+* Added : a "-v" option to vs-test-gpus. This shows startup and error messages, 
 making it easier to diagnose setup issues.
 
-6. Fixed : Documentation is now consistent with release files.
+* Fixed : Documentation is now consistent with release files.
 
-7. Updated this document with additional setup tests and a "Troubleshooting" section.
+* Updated this document with additional setup tests and a "Troubleshooting" section.
 
-8. Added : If viz-vgl allocates a GPU on the node where the desktop is
+* Added : If viz-vgl allocates a GPU on the node where the desktop is
 running, then it starts a vglclient on the same node. Using the environment
 variables VGL_CLIENT and VGL_PORT, user can point the script to a running
 vglclient.
@@ -48,71 +123,267 @@ utilities to allocate resources (GPUs), run applications on them, and free them
 when they are no longer needed.  VizStack provides ways to configure and drive 
 display devices, as well as higher level constructs like Tiled Displays. 
 
-Using VizStack, you may run as many remote visualization sessions as you have GPUs.
-VizStack supports HP's Remote Graphics Software and the TurboVNC/VirtualGL as 
-remote visualization solutions. You may use nVidia graphics cards and QuadroPlexes 
-to drive display devices. When the GPUs are not being used for display, they 
-could be used for to service remote users. If you are a user of ParaView or 
-Avizo, you will be able to run these applications directly. 
-
 VizStack manages only the visualization resources (GPUs, X servers), and does 
 not provide any utilities to do system management/setup on the nodes. VizStack 
 can dynamically setup the visualization resources to meet any application 
 requirement.
 
-For ease of use, VizStack provides integrations with Hewlett Packard's Remote 
-Graphics Software and TurboVNC/VirtualGL, as well as popular visualization 
-applications.
+=== Usage Scenarios ===
+
+The next few sections describe typical scenarios where you may find VizStack 
+useful.
+
+==== Remote Visualization "Farms" ====
+
+High-performance Workstations on individual user desktops are being replaced
+by powerful servers in the datacenter. End users equipped with laptops or 
+low powered desktops connect to these servers over standard TCP/IP networks.
+Users get a near-local experience using thin client technologies like HP's 
+Remote Graphics Software(RGS).
+
+Commodity servers easily support many multi-core processors and multiple GPUs.
+The extensive usage of PCI express Gen 2 in these servers ensures that peak 
+performance can be obtained with each GPU. Usage of technologies like nVidia's
+QuadroPlex products can double the number of GPUs per system.
+
+Most popular applications are serial in terms of rendering. One GPU is 
+sufficient for one user. With multiple GPUs on a system, multiple users could
+be supported. This reduces the cost per user without sacrificing performance
+achieved per user.
+
+Remote visualization typically delivers 10-20 frames a second to the end 
+user. Modern GPUs are extremely powerful.  Depending on the GPU usage 
+of the user application, each GPU may have spare capacity to accomodate 
+additional user(s).  Sharing a single GPU for use by multiple users
+reduces the cost per user even more, and could result in very high GPU utilization.
+
+VizStack allows you to create remote visualization farms from clusters of
+servers, blades or workstations. VizStack has integrated support for two
+technologies for remote visualization:
+
+* HP RGS : This is a very high performance remote access solution.  One 
+user per system is supported with RGS.
+
+* TurboVNC/VirtualGL : This is an open source solution. Each GPU can be
+configured to host one or more TurboVNC/VirtualGL remote visualization
+sessions. 
+
+VizStack provides a simple GUI for end users. Using this, users can start 
+remote visualization sessions directly from their desktops using just a few 
+clicks!
+
+Note that these solutions are independent of each other, and you can use
+one or both of them at the same time.
+
+==== Parallel Rendering Applications ====
+
+While the majority of rendering applications are serial, some applications
+have the ability to distribute the rendering load onto multiple GPUs.  ParaView
+and CEI's Ensight are two such popular applications.
+
+VizStack has integrated support for running ParaView render servers. End users
+of a VizStack system can use ParaView clients running on their desktops to 
+connect to ParaView servers that run on the VizStack system. 
+
+The GPUs in the system are allocated to users on demand. If VizStack is managing
+20 GPUs, then it can allocate these to a single user who may use all the GPUs or
+multiple users who may be using a few GPUs each.
+
+Users at your site could be developing parallel rendering applications
+using libraries like OpenSG or Equalizer. VizStack comes with sample scripts that
+show how to run applications that use these libraries, so users of these libraries
+can use VizStack to run their applications as well
+
+VizStack provides a Python API with which users can allocate and setup GPUs to do
+what they want. If you have are a user of some other application or libraries,
+you may use the existing script as a template and create one to run your own 
+application.
+
+VizStack can also be used if you intend to run applications that do batch rendering
+using one or more GPUs.
+
+==== Tiled Displays ====
+
+VizStack can help you configure a graphics cluster so that it drives one or
+more Tiled Displays. These Tiled Displays could drive TFT monitors, or stereo
+or mono projectors. Active or passive stereo display walls can be setup very
+easily.
+
+CAVE-like displays can be setup as multiple Tiled Displays : one for each
+side of the CAVE.
+
+The displays can be synchronized using hardware solutions like nVidia's framelock.
+nVidia Graphics cards and QuadroPlex units can be used to drive the individual
+display devices.
+
+TFT monitors typically thin bezels. This can result in discontinuities in the 
+rendered image. VizStack can configure mullions to skip over these bezels resulting
+in images that look natural.
+
+VizStack has integrated support for running MCS Avizo in VR mode on tiled displays. 
+VizStack's ParaView integration also lets render images on a tiled display or display
+wall.
+
+==== Mixed Usage Scenarios ====
+
+You may use a single VizStack cluster to cater to all the usage scenarios. A
+single VizStack cluster can run the following scenarios at the same time:
+
+* Remote Visualization sessions for one or more users, with or without
+GPU sharing.
+
+* Parallel rendering applications for one or more users
+
+* Applications running on tiled displays or display walls for one or more users
+
+VizStack allocates GPUs flexibly as needed by applications. GPUs that are 
+not being used to drive displays are assigned for remote visualization or
+parallel renderin uses if asked for.
+
+=== Comparing VizStack to typical Visualization System Setups ===
+
+==== Single System ====
+
+Let us assume you have one system with two GPUs.  Perhaps you would statically configure the 
+X server with one screen on each GPU.
+
+If you sit in front of this system and work, then You would use GDM to login and use the system.
+GDM would act as the access control and ensure only one user can use the system at a time. When 
+you logout, someone else could use the system.
+
+If the system is remote from you (let's say in a datacenter), then the user would start the X
+server manually. Two users won't be able to run the same X server simultaneously, so other
+users would be excluded.
+
+There are many limitations to this static setup:
+
+* Two users can't independently use one GPU each
+
+* Users can't switch between using one GPU and both GPUs easily
+
+* If you want to accomodate remote users using software like TurboVNC/VirtualGL, then
+there is no mechanism to share GPUs.
+
+* Nothing is _automatic_; every X server configuration you require needs you to make 
+changes to the configuration. Generating configuration files that X servers can use
+typically needs administrative privileges (root access), and these aren't available 
+to all users. Generating configuration files for all kinds of usage scenarios would
+be tedious, error prone and likely to cause user errors.
+
+==== Cluster of Nodes ====
+
+A cluster can have many more GPUs than a single node can. Using a cluster amplifies 
+the pains of static configuration manifold. 
+
+Software infrastructure is needed to decide what GPUs to allocate to which users. 
+Static configuration of X servers can be difficult to manage if there are nodes are 
+heterogeneous w.r.t their GPU configuration and usage.
+
+Some software solutions can allocate whole nodes to users. If you have many nodes 
+with more than one GPU, then this approach frequently results in many GPUs lying 
+idle.
+
+== Installing VizStack ==
+
+[[C2_1]]
+=== Supported Platforms ===
+
+VizStack is fairly generic software, and should run on most x86 machines with 
+Linux installed on them.  The machines need to be equipped with nVidia graphics
+ cards or QuadroPlexes footnote:[VizStack does not work with non-nVidia graphics cards at this time].
+
+VizStack has the following minimum software requirements
+
+. Xorg 6.9
+
+. nVidia driver version series 169 or higher
+
+At this time, VizStack has been tested with the following Linux distributions
+
+. RedHat Enterprise Linux (RHEL) 5.x x86_64
+
+. Novell SuSE Linux Enterprise Server (SLES) 10.2 x86_64
+
+VizStack is being tested on many graphics capable servers, workstations and blade 
+workstations made by Hewlett-Packard.
+
+VizStack is typically tested with the the following nVidia graphics options:
+
+. High End: Quadro FX 5800, 5600 and 4600. QuadroPlex 2200 D2, QuadroPlex 2100 S4, QuadroPlex 2100 M4
+
+. Medium Range: Quadro FX 3800, 3700 and 3500
+
+. Entry Range: Quadro FX 1800, 1700 and 1500
+
+VizStack is also known to work on many other Linux Distributions, but is not 
+extensively tested with them
+
+. Ubuntu 9.10, Ubuntu 8.10
+. Fedora Core 12
+. SuSE Linux Enterprise Server 11, SP1 x86_64
+
+VizStack should also work with GeForce cards, but is not tested extensively with them.
 
 === Modes of Operation ===
 
-VizStack can be used in three modes
+VizStack can manage the visualization resources on a cluster of nodes. One of
+these nodes is designated as a 'master', and runs the System State Manager(SSM)
+daemon. The master node does not need to have any GPUs. The head node of a cluster
+could be one choice for the master node.  The nodes other than the master need to 
+have at-least one GPU in them. This mode of operation is termed "sea of nodes".
 
-1. Sea of Nodes mode: In this mode, VizStack manages the visualization 
-resources on two or more nodes. One of these nodes needs to run VizStack's 
-System State Manager (SSM) daemon process. The node running the SSM may or 
-may not have GPUs in it.  To run VizStack in this mode, you typically need 
-to configure an "application launcher". You have a choice of using these
-application launchers:
-  a. SLURM, an open source resource manager
-  b. SSH, with nodes setup for password-less SSH.
-  c. Local "exec". This allows users to allocate and use GPUs on the node 
-     from where their jobs get scheduled.  If you're looking to use VizStack
-     in conjuction with a scheduler, then you may use either this application 
-     launcher, or SSH.
-In the sea-of-nodes configuration, you will also need to install & configure 
-Munge on all the nodes.
+In the sea-of-nodes mode, you will need to configure an "application launcher".
+The application launcher will be used for operations like starting X servers and
+for running application components.  You have a choice of using these application 
+launchers:
+. SLURM, an open source resource manager
+. SSH, with nodes setup for password-less SSH.
 
-2. Single Node mode: In this mode, VizStack manages the visualization 
-resources on exactly one physical node.  Using this mode instantly converts 
-a single node into a shareable visualization resource. You may also use the
- node to drive a large display wall or any other display system. This is 
-also the easiest way to try out VizStack. If you choose to run VizStack in 
-this mode, then you don't need to configure Munge and SLURM.
+In the sea-of-nodes configuration, you will need to install & configure 
+Munge on all the nodes. Munge is used for establishing a user's identity across
+the nodes.
 
-3. Static Configuration: This mode allows one to setup a static configuration
- of X servers, GPUs, display devices. This mode will be described in later 
-versions of this document.
+You may also use VizStack on a single node, called "standalone" mode. 
+In this case, VizStack manages the visualization resources on exactly 
+one physcal node. The node will be the master, and must have atleast one 
+GPU in it.  Using this mode instantly converts a single node into a 
+shareable visualization resource. You may also use the  node to drive 
+a large display wall or any other display system. This is the easiest 
+way to try out VizStack.
 
-Typically, you may also want to use a remote visualization solution with 
-VizStack. VizStack provides direct integration with two software solutions 
-for remote visualization:
+VizStack can also be used in another mode, called a "static" configuration.
+This mode allows one to setup a static configuration of X servers, GPUs, 
+display devices. This mode will be described in later versions of this document.
 
-1. Hewlett-Packard Remote Graphics Software. This provides one remote 
-visualization session per physical node.
-
-2. TurboVNC with VirtualGL for running OpenGL apps. You may have one remote 
-visualization session per GPU.
-
-You will need to manually install and configure the remote visualization 
-solutions of your choice. Note that these solutions are independent of each 
-other, and you can use one or both of them at the same time.
-
-== Installing VizStack ==
+=== Installation Steps ===
 
 Before you can install and use VizStack, you need to install the OS which will 
 form the underlying environment first. VizStack additionally depends on the 
 availability of a few additional software packages (over and above) the OS. 
+
+Refer to <<C2_1>> to ensure that your system(s) meet the minimum hardware and 
+software requirements.
+
+For every node, you need to do the following
+. Do kernel setup if needed[<<C2_2>>]
+. Setup all nodes with GPUs to start at runlevel 3. 
+. Install graphics/CUDA drivers. If you are going to use CUDA applications,
+then please completely follow the instructions in [<<INSTALL_NVIDIA>>].
+. Install the VizStack package and software dependencies[<<C2_3>>]
+. Install software needed for VizStack to work on more than one nodes
+.. Munge
+.. SLURM
+
+. Configure required software if running on more than one node
+.. NTP [<<REF_NTP>>]
+.. Munge [<<REF_MUNGE>>]
+.. SLURM [<<REF_SLURM>>] or Password-less SSH [<<REF_SSH>>]
+
+. Install & configure additional software
+.. RGS or TurboVNC/VirtualGL for remote graphics. Optionally, install the 
+VizStack Remote Access Tools on user desktop systems.
+.. Application software like ParaView, Avizo, Ensight, and any other software
+you need.
 
 Note that VizStack does not provide for node management, golden imaging, 
 installing Infiniband, configuring IP addresses, etc. VizStack can manage the 
@@ -120,59 +391,14 @@ visualization resources on one or more nodes. Before installing VizStack on a
 group of nodes, you need to ensure that Linux is installed and running on each
 and every node.
 
-Refer to <<C2_1>> to ensure that your system(s) meet the minimum hardware and 
-software requirements.
-
-The steps needed to get VizStack up and running are with your application are
-
-1. For every node
-   a. Do kernel setup if needed[<<C2_2>>]
-   b. Install graphics drivers, software dependencies needed for VizStack, and 
-      the VizStack RPM [<<C2_3>>]
-
-2. Configure required software if running on more than one node
-   a. NTP [<<REF_NTP>>]
-   b. Munge [<<REF_MUNGE>>]
-   c. SLURM [<<REF_SLURM>>] or Password-less SSH [<<REF_SSH>>]
-
-3. Install & configure additional software
-   a. RGS or TurboVNC/VirtualGL for remote graphics. Optionally, install the 
-VizStack Remote Access Tools on user desktop systems.
-   b. Application software like ParaView, Avizo, Ensight, and any other software
-      you need.
-
-[[C2_1]]
-=== Supported Platforms ===
-
-VizStack is fairly generic software, and should run on most x86 machines with 
-Linux installed on them.  The machines need to be equipped with nVidia graphics
- cards or QuadroPlexes footnote:[VizStack will not work with other non-nVidia graphics cards as of September 2009].
-
-VizStack has the following minimum software requirements
-
-1. Xorg 6.9
-
-2. nVidia driver version series 169 or higher
-
-At this time(September 2009), VizStack has been tested with the following Linux distributions
-
-1. RedHat Enterprise Linux (RHEL) 5.x x86_64
-
-2. Novell SuSE Linux Enterprise Server (SLES) 10.2 x86_64
-
-VizStack is being tested on many graphics capable servers, workstations and blade 
-workstations made by Hewlett-Packard.
-
-VizStack is typically tested with the the following nVidia graphics options:
-
-1. High End: Quadro FX 5800, 5600 and 4600. QuadroPlex 2200 D2, QuadroPlex 2100 S4, QuadroPlex 2100 M4
-
-2. Medium Range: Quadro FX 3800, 3700 and 3500
-
-3. Entry Range: Quadro FX 1800, 1700 and 1500
+If you are using golden imaging techniques to propagate linux to multiple
+nodes, then it makes sense to install and configure software all required software
+on one node, capture an image of that node, and propagate it to the rest of the
+nodes. You could do things this way, but remember to configure VizStack[<<CONFIGURE_VIZSTACK>>] 
+after all the nodes have been imaged and booted.
 
 [[C2_2]]
-=== Kernel Setup on Each Node ===
+==== Kernel Setup on Each Node ====
 
 This is applicable if you are using SLES, or any other distribution which defaults 
 to usage of a non-text mode console.  During installation, SLES configures the kernel 
@@ -182,11 +408,42 @@ this, we recommend that you turn off usage of any kind of VGA modes by the kerne
 
 You can do this by editing /boot/grub/menu.lst and removing any "vga=" options in the file.
 
+[[INSTALL_NVIDIA]]
+==== Installing nVidia Graphics Drivers ====
+
+First, download the nVidia graphics drivers relevant to your operating system and hardware 
+from http://www.nvidia.com/drivers/. You will typically choose "Linux 64 bit" as the Operating
+System, and the select the product type/series corresponding to the graphics options you have
+ installed.
+
+If you intend to run CUDA programs then you will need to install the driver needed for the 
+version of CUDA of your choice. Be sure to check that it is compatible with the graphics 
+hardware you have installed.
+
+The driver can be installed on one node by running a single command. E.g,, if you downloaded 
+version 177.70.35, then you would run :
+----
+# sh NVIDIA-Linux-x86_64-177.70.35-pkg2.run
+----
+
+IMPORTANT: You must stop all X servers before trying to install the driver.  Switching to run-level 3 is recommended.
+
+IMPORTANT: If you want to run CUDA applications, then you need to
+have a way of creating the device files needed by the
+nvidia driver (/dev/nvidia*) on all the nodes. Steps
+to do this are documented in the following link on
+NVIDIA forums : http://forums.nvidia.com/index.php?showtopic=52629 .
+Another link http://forums.nvidia.com/index.php?showtopic=49769&pid=272085&mode=threaded&show=0&st=0#entry272085 .
+
 [[C2_3]]
-=== Installing VizStack and Dependent Software ===
+==== Installing VizStack and Software Dependencies ====
 
 VizStack is distributed as a .rpm file. One file is provided for each supported platform,
 currently limited to RHEL 5, and SLES 10 SP2. 
+
+VizStack depends on the 'python-xml' package. This package is typically installed by default 
+on most linux distributions. If you are running SuSE Enterprise Linux 10 SP2, then you may 
+use the YaST2 tool to install this. 
 
 ****
 If you have an earlier version of VizStack installed, then be sure to remove it from all 
@@ -207,42 +464,73 @@ as the user scripts. After you install the VizStack RPM, you will need to
 *logout* and log back in again before you run any other commands.
 ============================================================================
 
+If you need to run VizStack on more than one node, then you will also need to install
+additional software
+. Munge (http://home.gna.org/munge/) for user authentication
+. Optional : SLURM (https://computing.llnl.gov/linux/slurm/) for application launcher. You could
+use passwordless SSH for job launching as well. If you use SSH, then proper cleanup of jobs in 
+a clustered environment is not guaranteed to happen, so we strongly recommend SLURM.
+
+Munge and SLURM will typically need to be compiled from source. python-xml is 
+available on all linux distributions.
+
 VizStack also includes the Remote Access Tools. This is meant to be installed on
 end user desktop systems. Pre-compiled binaries are available for Windows and Linux.
 Please see [<<REF_RAT>>] for more information on how to install these.
 
-==== Installing nVidia Graphics Drivers ====
+==== Installing Munge ====
 
-First, download the nVidia graphics drivers relevant to your operating system and hardware 
-from http://www.nvidia.com/drivers/. You will typically choose "Linux 64 bit" as the Operating
-System, and the select the product type/series corresponding to the graphics options you have
- installed.
+Munge is available from its home page at http://home.gna.org/munge/.  
 
-If you intend to run CUDA programs then you will need to install the driver needed for the 
-version of CUDA of your choice. Be sure to check that it is compatible with the graphics 
-hardware you have installed.
-
-The driver can be installed on one node by running a single command. E.g,, if you downloaded 
-version 177.70.35, then you would run :
+If you are using an RPM based linux distribution (RedHat/SuSE/CentOS/Fedora), 
+then please download the source RPM from the download page. You may build
+an RPM package for Munge using a command like the following
 ----
-# sh NVIDIA-Linux-x86_64-177.70.35-pkg2.run
+# rpmbuild --rebuild munge-<version>.src.rpm
+# rpm -i /usr/src/redhat/RPMS/`uname -m`/munge-libs-<version>.rpm 
+# rpm -i /usr/src/redhat/RPMS/`uname -m`/munge-<version>.rpm 
+# rpm -i /usr/src/redhat/RPMS/`uname -m`/munge-devel-<version>.rpm 
+----
+Use the version number corresponding to your download.
+
+Ubuntu/Debian have packages for Munge, and you may install munge using the
+standard methods on those distributions.
+
+On other distributions, you will need to compile Munge from source and install. To do
+this, download the source package (.tar.bz2) package, and then run the following
+commands
+----
+# tar xvjf munge-<version>.tar.bz2
+# cd munge-<version>
+# ./configure --prefix=/usr
+# make
+# make install (run this as root)
 ----
 
-IMPORTANT: You must stop all X servers before trying to install the driver.  Switching to run-level 3 is recommended.
+Note that you need to install Munge on every node. If you are using an image propagation
+mechanism, then you could install Munge on the node from which the image is generated,
+capture the image and then propagate it to all the nodes.
 
-==== Installing Software Dependencies ====
+==== Installing SLURM ====
 
-VizStack depends on the following packages
+SLURM is available from its home page at http://www.llnl.gov/linux/slurm/
 
-1. Xerces-C version 2.x, tested with version 2.7 and 2.8
-2. python-xml. If you are running SuSE Enterprise Linux 10 SP2, then you may use the YaST2 tool to install 
-   this. This package is typically installed on most other linux distributions.
-3. If you need to run VizStack on more than one node
-   a. Munge (http://home.gna.org/munge/) for user authentication
-   b. Optional : SLURM (https://computing.llnl.gov/linux/slurm/) for application launcher
+SLURM works with Munge on a cluster to provide job launching capabilities. You will have
+to compile SLURM from source on all distributions except Ubuntu/Debian.  On Ubuntu/Debian,
+install the package "slurm-llnl" using the normal installation mechanisms.
 
-Munge and SLURM will typically need to be compiled from source. Packages for Xerces-C and python-xml are 
-available for most linux distributions.
+To compile from source, download the source package and run the following commands
+----
+# tar xvjf slurm-<version>.tar.bz2
+# cd slurm-<version>
+# ./configure --prefix=/
+# make
+# make install (run this as root)
+----
+
+Note that you need to install SLURM on every node. If you are using an image propagation
+mechanism, then you could install Munge and SLURM on the node from which the image is 
+generated, capture the image and then propagate it to all the nodes.
 
 === Configuring Required Software ===
 
@@ -338,10 +626,11 @@ and create the JobCredentialPublicCertificate too
 # openssl rsa -in /etc/slurm/slurm.key -pubout -out /etc/slurm/slurm.cert
 ----
 
-Make a copy of the slurm example file from /etc/slurm/slurm.conf.example and 
-edit it in your favorite editor. Assuming that your nodes are named node1, 
-node2,...,node5 and the node named node1 is the master/control/head node, your 
-file needs to look like
+Make a copy of the slurm example file from /etc/slurm/slurm.conf.example (this
+will be in the etc directory of the SLURM source code if you installed SLURM 
+from source) and  edit it in your favorite editor. Assuming that your nodes 
+are named node1, node2,...,node5 and the node named node1 is the 
+master/control/head node, your file needs to look like
 ----
 ControlMachine=node1
 ...
@@ -416,15 +705,31 @@ desktop sessions, but users will not be able to connect to them.
 You will need to install VirtualGL and TurboVNC on all the nodes. The following packages were 
 tested with VizStack
 
-1. turbovnc-0.5.1.i386.rpm
-2. turbojpeg-1.11.x86_64.rpm
-3. virtualGL-2.1.2.x86_64.rpm
+. turbovnc-0.5.1.i386.rpm
+. turbojpeg-1.11.x86_64.rpm
+. virtualGL-2.1.2.x86_64.rpm
 
 The TurboVNC server listens to connections on TCP port 5901, 5902, etc. Ensure that your 
-network stack allows incoming connections to these ports.  VizStack, by default configures 
-each node to allow as many TurboVNC sessions as there are GPUs on the system. So, if you 
-have two GPUs on the system, then you need to open TCP ports 5901, 5902. If you have 
-more GPUs, then you need to open more ports.
+network stack allows incoming connections to these ports.  
+
+VizStack, by default configures each node to allow atleast as many TurboVNC sessions as 
+there are GPUs on the system. By default, VizStack configures each GPU to be shared by
+two users. The administrator can configure each GPU to be shared by upto 8 users. Each 
+such user can use a TurboVNC server to get remote access to the system.
+
+If you have two GPUs on the system, then you need to open atleast TCP ports 5901 to 5904,
+if GPU sharing is enabled. These ports correspond to TurboVNC servers :1 to :4.  If you 
+have more GPUs, or if you choose to share GPUs among more users, then you need to open 
+more ports. 
+
+Note that VizStack configures X servers for each potential user. On a multi-GPU
+system with GPU sharing, VizStack may need more than 10 X servers. If you 
+allow X11 forwarding over SSH, then you may need to adjust the offset of the X 
+servers used by SSH. This may be done by adjusting the 'X11DisplayOffset'
+value in /etc/ssh/sshd_config. The configuration commands print out messages
+when you need to do this. If you do not adjust the X11DisplayOffset value,
+then you may find that user jobs fail to start, due to inability to use the X
+server ports.
 
 TurboVNC needs another big setup step as well. On every node, for every user that intends to 
 use TurboVNC, you need to ensure that a password file is setup.  NFS shared home directories 
@@ -445,35 +750,32 @@ For Windows end-users, please download and install VizStackRemoteAccessSetup-v1.
 is a standard windows installer.
 
 For Linux end-users, please download and install vizrt-1.0-noarch.rpm. This RPM has a few dependencies :
-1. The Paramiko library for SSH (http://www.lang.net/paramiko). Prebuilt packages are available for Red Hat and Fedora, as well as for Ubuntu/Debian.
-2. wxPython 2.8 and above. Prebuilt packages for Red Hat/CentOS are available from RPMforge(http://rpmrepo.org/RPMforge)
+. The Paramiko library for SSH (http://www.lang.net/paramiko). Prebuilt packages are available for Red Hat and Fedora, as well as for Ubuntu/Debian.
+. wxPython 2.8 and above. Prebuilt packages for Red Hat/CentOS are available from RPMforge(http://rpmrepo.org/RPMforge)
 
-==== ParaView ====
-
-The VizStack software bundle includes a precompiled version of ParaView.  This is provided 
-as a convenience for the RHEL platform. This also needs installation of MPICH2 for 
-functioning.
 
 ==== Other Application Software ====
 
 You may want to use a variety of applications on your visualization resources. You will 
-need to install/configure these, install their licenses and start any daemon processes 
+need to install/configure these, install their licenses(if needed) and start any daemon processes 
 that may be needed.
 
 [[REF_SSH]]
 ==== Configuring password-less SSH ====
 
 Some applications (e.g. Ensight) use password-less SSH to run the parallel rendering 
-parts of the application. VizStack's Amira integration script uses it to copy 
-configuration files to other nodes.  Similarly, VizStack's ParaView script also uses 
-password-less SSH.
+parts of the application. 
 
 Password-less SSH can be setup in a variety of other ways as well, and it is up-to 
 you to use the right method for your site.
 
+[[CONFIGURE_VIZSTACK]]
 === Configuring VizStack ===
 
-==== Single Node Configuration ====
+VizStack can be configured to control the visualization resources on one or more
+nodes.
+
+==== Standalone Configuration ====
 
 As root, execute the following command
 ----
@@ -548,6 +850,91 @@ SSM, i.e. to this port on the master host. If your nodes are in an internal
 network without restrictions in terms of internal connections, then this is 
 not a concern.  Otherwise, you may need to configure your firewall to achieve this.
 ============================================================================
+
+==== Configuring GPU sharing ====
+
+VizStack (v1.1 and above) allows users to share GPUs. When used with TurboVNC,
+this allows administrators to configure a system to host more remote users than 
+the number of GPUs on the system.
+
+The configuration commands vs-configure-system and vs-configure-standalone
+configure the system for GPU sharing automatically. By default, each GPU
+is configured to be shared by two users. GPUs which are detected to be connected
+to displays are not shared.
+
+The configuration commands vs-configure-system and vs-configure-standalone
+accept a few options that allow you to configure GPU sharing:
+
+* -S, --gpu-share-count : Allows you to say how users would share a single GPU.
+By default, each GPU is shared by a maximum of two users.
++
+To share each GPU with 4 users
++
+----
+# /opt/vizstack/sbin/vs-configure-standalone -S 4
+----
++
+To disable GPU sharing altogether, use a count of 1
++
+----
+# /opt/vizstack/sbin/vs-configure-standalone -S 1
+----
+* -i, --ignore-display-device : Tells the configure scripts to ignore a matching
+display device. This can be used in a scenario where there is a KVM connected
+to some GPUs in the system. You may use this option multiple times.
++
+To ignore a connected HP KVM dongle, use
++
+----
+# /opt/vizstack/sbin/vs-configure-standalone -i "AVO Smart Cable"
+----
++
+Ignoring the dongle will enable sharing on the GPU to which the dongle
+is connected, if no other display devices are connected to the GPU.
+
+* -x, --exclude-sharing : Disables GPU sharing on a specific node. Use this option
+multiple times to disable sharing on multiple nodes.
++
+You would use this option if you have displays connected to GPUs on a node,
+but the configuration script is unable to detect them. The configuration script
+will fail to detect a display device if the nvidia driver fails to detect it.
+The nvidia driver could fail to detect a display device if it is unable to get
+an EDID for the display device. Certain versions of nvidia drivers may have a bug
+which prevents it from reading the EDID. Also, if you use KVM extenders which dont
+support DDC, then the nvidia driver will not be able to detect the connected
+display device.
+
+==== Configuration Files ====
+
+The commands vs-configure-standalone and vs-configure-system create at-least 
+three configuration files
+
+. /etc/vizstack/master_config.xml. This file is created on all the nodes.
+
+. /etc/vizstack/node_config.xml. This file defines the nodes under vizstack, the resources
+available on each node, as well as information about the application launch mechanism. This file is
+created only on the master node.
+
+. /etc/vizstack/resource_group_config.xml. This file contains information about the 
+available tiled displays. An valid XML file is created if none exists.
+
+VizStack includes template files for GPUs and display devices. Your systems may have
+GPUs and display devices for which VizStack does not have a template. Display devices
+that support DDC and are directly connected to GPUs can be detected by VizStack.
+
+VizStack generates templates the template files in
+
+. /etc/vizstack/templates/displays for Display Devices
+
+. /etc/vizstack/templates/gpus for GPUs.
+
+Many times, these generated templates would be good enough to make your system with
+VizStack. If you find that the generated templates do not accuratelye reflect the
+device capabilities, then please modify them.
+
+Predefined VizStack files are present in the directory /opt/vizstack/share/templates.
+Templates present in the /etc/vizstack directory overrride the templates in the
+/opt/vizstack/share/templates directory.
 
 ==== Configuring SLI and QuadroPlexes ====
 
@@ -751,294 +1138,74 @@ like SLURM as the application launcher.
 
 === Creating and Deleting Tiled Displays ===
 
-This is described in detail in <<X6>>.
+Some applications need access to a Tiled Display to run. Tiled Displays need to be configured by
+you before users can run such applications. This is described in detail in <<X6>>.
 
-== Using VizStack ==
+=== Prioritizing Nodes ===
 
-VizStack provides a few scripts to aid usage of the visualization resources. 
-Currently, there are two categories of scripts: remote visualization 
-scripts(RGS, TurboVNC/VirtualGL) and application launch scripts(Amira/ParaView)
+The nodes managed by VizStack may be heterogeneous in many ways. Some nodes may have special
+characteristics, e.g. they may contain a lot of memory, more processors/cores compared
+to other nodes OR special I/O device(s) needed for particular applications.
 
-Many application scripts need access to a Tiled Display to run. Tiled Displays 
-need to be configured prior to running these.
+VizStack considers only visualization resources when it allocates resources for user
+jobs. You may want to prioritize nodes with special characteristics so that resources
+from them are picked up last. 
 
-=== Remote Desktop Sessions ===
+Every node has a 'weight' property. When selecting resources for user jobs,
+VizStack sorts nodes by their wieghts. Nodes with lower wieghts are prioritised ahead nodes
+with higher wieghts for resource allocation.
 
-VizStack provides a GUI for starting remote desktop sessions.
-The GUI is installed on the end user's desktop. This allows users
-to easily start remote desktop sessions(using RGS/TurboVNC). 
-
-VizStack also provides a command line interface using scripts, one
-each for TurboVNC and RGS. To use these, users have to log into the 
-VizStack system and then invoke the script. Several options are 
-currently available only from the command line interface.
-
-==== Installing the GUI interface ====
-
-VizStack provides the GUI interface for both Windows and Linux.
-
-For Windows, an all-in-one executable setup program is provided.
-This can be run by the end users to install the interface for
-starting remote desktop sessions using HP's RGS software as well
-as TurboVNC/VirtualGL.
-
-An RPM is provided for Linux systems. The RPM depends on the 
-following software, which needs to be installed prior to installing
-the RPM:
-
-1. python-paramiko
-2. wxPython
-
-NOTE: The end user needs to install HP RGS Receiver or TurboVNC client software prior to using these remote access tools.
-
-==== HP Remote Graphics Software ====
-
-===== Using the GUI =====
-
-On Windows, click the Start button, select "All Programs", then
-select "VizStack Remote Access", and finally click on 
-"Viz Connector for HP RGS Receiver". This will show up a GUI as
-shown in <<X3>>.
-
-On Linux, the user needs to run the command
+To set the wieghts for a node, edit the file /etc/vizstack/node_config.xml
+on the master node. Locate the "wieght" tag for the particular node, and
+change its value. The default value will be 0, as shown below
 ----
-$ /opt/vizrt/bin/remotevizconnector
+...
+                <node>
+                        <hostname>localhost</hostname>
+                        <model>ProLiant DL785 G5</model>
+                        <wieght>0</wieght>
+			...
+		</node>
+...
 ----
 
-[[X3]]
-.Starting a Remote Desktop session using HP RGS
-image::../images/rgs-connector.png[Session using RGS]
 
-At this time, the user needs to type in their username and the
-hostname (or IP address) of the VizStack master, and click on the
-'Go' button. After clicking the 'Go' button, the user will be
-prompted for their account password. This authentication can be 
-avoided by configuring the PuTTY Agent to allow passwordless
-SSH into the VizStack master node. Finally, the RGS receiver 
-will be started and the user will be authenticated again.
+If you have only one special node which you want to be picked up last, then you may
+set the wieght to 1 to ensure this is picked up last. If you have multiple
+nodes, and want to prioritize among them, then you need to setup a value for each
+separately.
 
-If all goes well, the desktop will start with a default resolution
-of 1280x1024 pixels. This can be changed by clicking on the 
-'More Options' checkbox, and selecting a desired resolution.
+For the weight to take effect, you need to restart the SSM after saving the
+file.
 
-To give up the session, the user needs to logout of the desktop.
-The user may also choose to click the 'Terminate Session' button.
-Doing so will kill all running applications and is not recommended.
+=== How VizStack Allocates GPUs ===
 
-===== Using viz-rgs =====
+Most of the VizStack user scripts (and the remote access GUI) allocate GPUs without 
+asking for specific GPUs. Specific GPUs are requested typically only to drive tiled
+displays. E.g., when a user runs 'viz-tvnc', s/he do not have an option to say the
+exact GPU that should be allocated.
 
-The script "viz-rgs" allocates remote desktop sessions using HP RGS 
-software. You need to run this script as a regular user; it will not 
-run as root. Sample invocations are shown below.
+VizStack manages a pool of GPUs.  The GPUs, being physical resources, are 
+associated with an index (ranging from 0 to number_of_gpus-1) depending on where they 
+are plugged into the system. This is described in <<VIZSTACK_GPU_NUMBERING>>.
 
-Allocate an RGS desktop on a single GPU, picking up a node automatically. 
-Note that the node where the RGS desktop is running can use the other 
-GPUs (i.e. excluding the one which is in use by RGS)
+When allocating a GPU(and in general any other resources), VizStack has to choose
+which node to allocate the GPU from. The nodes which have free GPUs are ordered
+first by their weights. If two nodes have the same weight, then VizStack looks at
+the sum of the weights of the free resources on the node. Nodes with lower
+aggregate weights are prioritized higher. If the aggregate weight of the nodes is
+equal, then the node with a lower index is chosen. The index of each node is defined in
+the node_config.xml file.
 
-----
-$ viz-rgs
-----
+GPUs can be shared at runtime. In the case of shared GPUs, the weight of the GPU 
+is influenced by the number of times the GPU is shared already. GPUs which are shared 
+are prioritised ahead of GPUs which are not shared.
 
-This script will print out the connection information that the user needs 
-to enter into the RGS client program. After authentication, the user 
-will be able to use the desktop. User gives up the desktop either by logging 
-out or by killing the script (former method is recommended).
+GPUs which are either connected to display devices statically  or included in 
+tiled displays are prioritized after all other GPUs on the node.
 
-Start an RGS desktop on a GPU with a specific desktop size
-
-----
-$ viz-rgs -g 1600x1200
-----
-
-Note that this resolution does not need to match any physical display device 
-resolution.  The only restriction is that the width of the desktop must 
-be a multiple of 8.  E.g, the following is allowed too
-
-----
-$ viz-rgs -g 1000x1000
-----
-
-Desktop sizes can go really large: up-to 8192x8192 on Quadro FX 5800/4800/1800,
-and 4096x4096 on 5600/4600/1700. Note that large desktops can directly result 
-in sluggish performance and higher bandwidth usage.
-
-Desktop sessions started using viz-rgs are completely secure. This is 
-achieved by running the applications in a virtual frame buffer. The desktop pixels 
-on these sessions is never sent to the display output on the graphics card. 
-
-===== Usage with Batch Schedulers =====
-
-With LSF configures as described earlier, use the following command to start
-a session
-----
-$ bsub -R "rusage[gpu=1,rgs=1]" /opt/vizstack/bin/viz-rgs -b
-----
-
-viz-rgs will allocate a GPU on the node where the script gets scheduled, 
-and setup RGS to use that GPU.  However, it will not do any site specific 
-operations that may be needed to inform the user how this session may be 
-used (e.g. by sending email). You may choose to redirect the output of 
-the script to a file, and get the connection information from there.
-
-[NOTE]
-============================================================================
-The script will allocate an RGS session on the node irrespective of whether
-you reserve a GPU. This happens since VizStack cannot query LSF and find out
-what resources were allocated to a particular user.  
-
-Later releases of VizStack may be able to query the scheduler about what 
-resources were allocated to a node, and then use that information to require 
-the user to reserve GPUs using LSF/other schedulers.
-============================================================================
-
-==== TurboVNC/VirtualGL ====
-
-===== Using the GUI =====
-
-On Windows, click the Start button, select "All Programs", then
-select "VizStack Remote Access", and finally click on 
-"Viz Connector for TurboVNC". This will show up a GUI, as shown
-in <<X4>>.
-
-On Linux, the user needs to run the command
-----
-$ /opt/vizrt/bin/remotevizconnector --tvnc
-----
-
-[[X4]]
-.Starting a Remote Desktop session using TurboVNC/VirtualGL
-image::../images/tvnc-connector.png[Session using RGS]
-
-At this time, the user needs to type in their username and the
-hostname (or IP address) of the VizStack master, and click on the
-'Go' button. After clicking the 'Go' button, the user will be
-prompted for their account password. This authentication can be 
-avoided by configuring the PuTTY Agent to allow passwordless
-SSH into the VizStack master node. Finally, the TurboVNC viewer 
-will be started and the user will be authenticated again.
-
-If all goes well, the desktop will start with a default resolution
-of 1280x1024 pixels. This can be changed by clicking on the 
-'More Options' checkbox, and selecting a desired resolution.
-
-To give up the session, the user needs to logout of the desktop.
-The user may also choose to click the 'Terminate Session' button.
-Doing so will kill all running applications and is not recommended.
-
-===== Using viz-tvnc =====
-
-The script viz-tvnc allocates remote desktop sessions using TurboVNC.  With the 
-default VizStack configuration, a single node can host as many TurboVNC sessions 
-as there are GPUs in the machine.
-
-Usage is same as RGS,
-----
-$ viz-tvnc
-----
-
-This will allocate a TurboVNC session. You need to use the TurboVNC client program 
-to connect to the desktop.  To run OpenGL applications inside this session, use 
-the following command
-----
-$ vglrun <appname> <args>
-----
-
-Again, viz_tvnc can be run with any arbitrary resolution, subject to the "multiple 
-of 8" restriction.
-
-===== Usage with Batch Schedulers =====
-
-If you have configured LSF as mentioned earlier in this document, a user may start 
-a TurboVNC session using
-----
-$ bsub -R "rusage[gpu=1]" /opt/vizstack/bin/viz-tvnc -b
-----
-
-Note that viz-tvnc will allocate a GPU on the node where the script gets scheduled, 
-and setup TurboVNC to use that GPU.  However, it will not do any site specific 
-operations that may be needed to inform the user how this session may be used. 
-You may choose to redirect the output of the script to a file, and get the 
-connection information from there. 
-
-A better method would be to use TurboVNC's reverse connection feature. In this
-method, the user first starts the TurboVNC client in "listening" mode on his 
-desktop and then run the following command on the cluster:
-----
-$ bsub -R "rusage[gpu=1]" /opt/vizstack/bin/viz-tvnc -b -c <desktop_host>
-----
-
-=== Popular Applications ===
-
-==== Avizo ====
-
-VizStack provides a script that makes it easy to run MCS Avizo on a tiled display. 
-VizStack's Avizo script relies on prior setup of passwordless SSH. To run Avizo 
-on a tiled display, run
-
-----
-# viz-avizovr -t tile2x2
-----
-
-This works, provided there is a tiled display named "tile2x2"
-
-==== ParaView ====
-
-The VizStack ParaView script needs mpich2 to be installed and configured. The relevant 
-rpms for RHEL5.x are
-
-mpich2-devel-1.0.8p1-2.el5.x86_64.rpm
-mpich2-libs-1.0.8p1-2.el5.x86_64.rpm
-mpich2-1.0.8p1-2.el5.x86_64.rpm
-
-To run ParaView on a tiled display, run
-
-----
-# viz-paraview -t tile2x2
-----
-
-This works, provided there is a tiled display named tile2x2. ParaView has been only 
-tested on Redhat as there are some core issues compiling ParaView on SLES 10.2.
-
-The ParaView script has 2 modes of operation, Distributed Rendering (DR) mode and 
-Tiled Display(TD) mode. 
-
-In DR mode, render GPUs are specified using the -r option and the display mode of 
-the X server with the -m option. Now the loaded dataset is rendered in a distributed 
-mode by ParaView.
-
-In the TD mode, a Tiled Display specified in /etc/vizstack/resource_group_config.xml,
-is specified on the command-line using -t option. The loaded dataset is displayed
-on this tiled display.
-
-ParaView scripts has a server only mode, where only the servers are started on
-the allocated tiled display. The node name and port number where one should connect
-to the server is printed on the command-line. The user can start the ParaView client
-on his local desktop (it can be running either Windows or Linux) and connect to
-the ParaView server. Note that the firewall on the node on which the server is running
-needs to let in incoming connections on the specified port.
-
-ParaView works by using ports within the range 11111 - 11143. The firewall needs to
-be configured to open these ports when ParaView script is run in server only mode.
-
-
-=== Local Desktop ===
-
-Sometimes, the user would want to directly interact with one OR more GPUs using an 
-X server with a directly connected keyboard/mouse. This is equivalent to using the 
-GPUs and Input devices as if they were part of a local desktop.  
-
-If you want to use such a local desktop setup, then you need to use the viz_desktop 
-script. This script accepts a Tiled Display as an input argument. The tiled display 
-needs to be setup such that a keyboard and a mouse are part of the tiled display 
-specification.  The tiled display can use as many GPUs as needed from a single 
-machine.  The input tiled display is restricted to include GPUs only from a single 
-machine.  If you pass a Tiled Display which does not adhere to these restrictions, 
-then the script will not start the desktop.
-
-Starting a local desktop is as easy as running the other scripts
-----
-# viz-desktop -t desktop
-----
+GPUs which do not have a capability to drive displays are chosen first for remote
+desktop purposes, or if render only GPUs are needed.
 
 == VizStack Numbering Conventions ==
 
@@ -1046,25 +1213,26 @@ VizStack has a convention for numbering the visualization resources on each node
 in a particular order.  Knowing this numbering convention is important to do 
 certain tasks like:
 
-1. Configuring Tiled Displays to use specific GPUs
+. Configuring Tiled Displays to use specific GPUs
 
-2. Configuring the firewall for remote visualization services like TurboVNC and
+. Configuring the firewall for remote visualization services like TurboVNC and
 HP RGS
 
+[[VIZSTACK_GPU_NUMBERING]]
 === VizStack GPU Numbering ===
 
 Systems controlled by VizStack may have one/more GPUs on each node.  It is 
 not necessary that all the nodes have the same configuration.  In particular, 
 this means that a
 
-1. a node is not restricted to have the same number of GPUs as another node
+. a node is not restricted to have the same number of GPUs as another node
 
-2. a node does not need to have the same kind of GPUs as another node.
+. a node does not need to have the same kind of GPUs as another node.
 
-3. on a node, you may choose to connect GPUs on any available slots, independent 
+. on a node, you may choose to connect GPUs on any available slots, independent 
 of how you may have connected the GPUs on any other node
 
-4. GPUs can be connected to display devices in any layout you choose.  Again, 
+. GPUs can be connected to display devices in any layout you choose.  Again, 
 the display connections on a node need not match the connections on another node.
 
 VizStack provides you the flexibility to configure nodes independently depending 
@@ -1083,20 +1251,20 @@ or may be included inside external QuadroPlex graphics devices.
 Each GPU is assigned an index when VizStack's configuration script is run. The index 
 of a GPU depends on three things
 
-1. The PCI slot the GPU is sitting on
+. The PCI slot the GPU is sitting on
 
-2. If the GPU is inside a QuadroPlex, then the GPUs position in the QuadroPlex as 
+. If the GPU is inside a QuadroPlex, then the GPUs position in the QuadroPlex as 
 well as the PCI slot where the QuadroPlex is connected do matter as well.
 
-3. The other GPUs (including those inside QuadroPlexes) that are connected to the system
+. The other GPUs (including those inside QuadroPlexes) that are connected to the system
 
 VizStack uses the following algorithm to number the GPUs
 
-1. Find all the GPUs on the system
+. Find all the GPUs on the system
 
-2. Order the GPUs by their PCI id.
+. Order the GPUs by their PCI id.
 
-3. The index of a GPU is its position in the sorted list.
+. The index of a GPU is its position in the sorted list.
 
 While this is fine from a system point of you, you would want to associate the 
 GPU index with a physical GPU.  Determining the physical position of a GPU by 
@@ -1158,18 +1326,18 @@ can be used as independent GPU blocks.
 Blocks can drive one or more displays according to the type of block.  GPU blocks
 can drive one or two displays in two possible layouts
 
-1. A single display (1x1)
-2. Two displays side-by-side (2x1), or one below the other (1x2).
+. A single display (1x1)
+. Two displays side-by-side (2x1), or one below the other (1x2).
 
 .Possible Display Layouts for a GPU block
 image::../images/gpu-block.png[Possible Display Layouts for a GPU block]
 
 QuadroPlex blocks can drive two to four displays in the following possible layouts
 
-1. Two displays arranged horizontally (2x1) or vertically (1x2)
-2. Four displays in a square configuration (2x2)
-3. Three displays arranged horizontally (3x1) or vertically (1x3)
-4. Four displays arranged horizontally (4x1) or vertically (1x4)
+. Two displays arranged horizontally (2x1) or vertically (1x2)
+. Four displays in a square configuration (2x2)
+. Three displays arranged horizontally (3x1) or vertically (1x3)
+. Four displays arranged horizontally (4x1) or vertically (1x4)
 
 .Possible Display Layouts for a QuadroPlex block
 image::../images/qp-block.png[Possible Display Layouts for a QuadroPlex block]
@@ -1181,19 +1349,19 @@ devices. Each display device defines a set of modes that are compatible with it.
 
 All display may also be physically rotated, in one of the following ways:
 
-1. Portrait (90 degrees to the left)
-2. Inverted Portrait (90 degrees to the right)
-3. Inverted Landscape (180 degrees)
+. Portrait (90 degrees to the left)
+. Inverted Portrait (90 degrees to the right)
+. Inverted Landscape (180 degrees)
 
 Note that the same rotation setting applies to all the displays.
 
 All displays may also be configured for one of the following stereo modes:
 
-1. Active stereo, using Shutter glasses
-2. Passive stereo. This mode is compatible only with GPU blocks, and is not
+. Active stereo, using Shutter glasses
+. Passive stereo. This mode is compatible only with GPU blocks, and is not
 available for use with QuadroPlex blocks.
-3. Auto-stereoscopic SeeReal DFP, suitable for use with Tridelity SV Displays.
-4. Auto-stereoscopic Sharp3D DFP
+. Auto-stereoscopic SeeReal DFP, suitable for use with Tridelity SV Displays.
+. Auto-stereoscopic Sharp3D DFP
 
 Tiled displays are made by replicating blocks in a rectangular matrix. In general,
 a tiled display may consist of 'n'\*'m' blocks, where 'n' is the number of columns,
@@ -1207,7 +1375,7 @@ thus exposing only one X screen covering all GPUs.
 
 This is useful in at-least the following two scenarios:
 
-1. Some applications may not be able to use more than one GPU per node (or more
+. Some applications may not be able to use more than one GPU per node (or more
 specifically, an X screen) . This limitation can partly be overcome by using 
 QuadroPlex blocks, thus enabling the application to run on two GPUs. However,
 this is not a solution if you need to run your application over more than two
@@ -1216,7 +1384,7 @@ these limitations is to enable Xinerama on the X server, thus enabling the
 application to run on all the GPUs. However, this does have drawback : performance
 with Xinerama degrades as the number of GPUs increases.
 
-2. You may want to configure the X server with input devices, and physically
+. You may want to configure the X server with input devices, and physically
 control all the GPUs configured for the X server.
 
 === Creating Tiled Displays ===
@@ -1273,18 +1441,16 @@ configuration of the tiled displays in advance, and chain the G-Sync cards.
 We recommend that administrators setup tiled displays with the following
  considerations in mind:
 
-1. Avoid including GPUs from more than one frame lock chain in a tiled
+. Avoid including GPUs from more than one frame lock chain in a tiled
 display. Doing so may result in an undefined state w.r.t framelock.
 
-2. Avoid creating multiple tiled displays on a single framelock chain,
+. Avoid creating multiple tiled displays on a single framelock chain,
 unless you intend to use them together.
 
-User scripts provided by VizStack automatically enable frame lock on tiled 
-displays, if frame lock is available on all of them. Failure to setup frame 
-lock is treated as a failure, and the scripts terminate. If you create
-tiled displays which cannot be framelocked, and the scripts terminate
-with framelock errors, then you should use the command line option 
-'--no-framelock' so that the scripts avoid trying to setup framelock.
+VizStack applications scripts (viz-*) VizStack do not automatically 
+enable frame lock on tiled displays. If you know that framelock can
+be activated on them, then using the '-f' option activates framelock.
+If framelock setup fails, then the scripts terminate.
 
 === Tiled Displays with Input Devices ===
 
@@ -1401,13 +1567,13 @@ You'll need to restart the SSM to use the new mouse.
 
 The following display devices have built-in definitions defined in VizStack
 
-1. HP LP3065
-2. HP LP2065
-3. Tridelity MV 2700. This is Tridelity's 27" multi-view autostereoscopic display.
+. HP LP3065
+. HP LP2065
+. Tridelity MV 2700. This is Tridelity's 27" multi-view autostereoscopic display.
 This is internally based on a Samsung SyncMaster display.
-4. HP AVO Smart Cable; this is HP's standard KVM dongle
-5. HP L1955
-6. Sony SRX Projector
+. HP AVO Smart Cable; this is HP's standard KVM dongle
+. HP L1955
+. Sony SRX Projector
 
 Using other display devices will need you to configure them specifically for VizStack.
 
@@ -1428,14 +1594,60 @@ Most display devices can describe their capabilities to a graphics card, using a
 data structure called Extended Display Identification Data (EDID). The graphics 
 card uses this information to determine what modes are supported on the display 
 device, as well as to compute the display signal timing for the supported modes.
+The EDID also contains additional data that VizStack uses - e.g. the name of
+the display device, physical dimensions of the display, etc.
 
-If a graphics card is directly connected to a display device (using either a 
-VGA or DVI cable), then the graphics card will get access to the EDID. If the 
-connection is made a DVI extender, then the graphics card may not have access 
-to the EDID. DVI extenders come in two types: ones that support DDC (Display 
-Data Channel) protocol and once that don't. If you use a DVI extender which supports 
-DDC, then you may treat the connection as a local connection. If your DVI extender 
-does not support DDC, then you will need to get the EDID of the display device manually. 
+We recommend that you wire the displays to the graphics cards before you
+run the configuration commands. This gives VizStack a chance to detect as 
+many display devices as it can.  
+
+If the nvidia driver can get the EDID for a connected display device, and
+no template for that device already exists, then VizStack will generate a 
+template for that display device.  One template for every device not known
+to VizStack will be generated when you run the configuration commands (vs-configure-system 
+or vs-configure-standalone).  At the end of the configuration command, 
+you will know which displays did not get detected.
+
+To use the displays which did not get detected, you have two options
+
+* Create a template manually. This provides maximum flexibility, but
+also needs the maximum amount of work.
+
+* VizStack has a generic template for DFP and CRT monitors. These are
+identified by the names 'Generic DFP Monitor' and 'Generic CRT Monitor'.
+You could try to use these; they may work for the resolution and refresh
+rate you need. Note that these definitions do not provide information
+about the dimensions of the display device, or information about bezels,
+since they are not tied to a specific device.
+
+==== Creating a Display Template Manually ====
+
+First, you need to find whether your display device provides an EDID. 
+If this is a sufficiently new device, then it will provide an EDID.
+Providing an EDID makes the device compatbile with Operating Systems
+like Windows, so if your display claims compatibility with Windows,
+then it will certainly provide an EDID. Also, look at the specifications 
+of your display; EDID will be provided if it says, "supports DDC" or 
+anything similar.
+
+If your display wasn't detected by VizStack, the possible causes are:
+
+* An issue with the nvidia driver. Certain versions of the nvidia
+driver may not be able to get the EDID of all connected display
+devices.
+
+* You have connected the display to the graphics card via a DVI 
+extender that does not support the DDC protocol. The DDC protocol
+allows the graphics card to read the EDID of the display device.
+Without support for DDC, the graphics card cannot detect the display
+device.
+
+* The display device does not support EDID
+
+===== Display Device supports EDID =====
+
+If you are sure that your display device supports EDID, then you
+need to get the EDID information manually.
 
 One way to get the EDID is to use a laptop with Windows installed on it. Connect the 
 display device to the laptop, and configure Windows to enable/drive it. Make sure 
@@ -1445,68 +1657,104 @@ get the actual EDID data is by downloading the softMCCS tool (available from
 http://www.entechtaiwan.com/lib/softmccs.shtm). To extract the EDID file for the 
 connected display, 
 
-1. Run softMCCS.
+. Run softMCCS.
    image:../images/softMCCS.png[Screenshot of softMCCS]
-2. Select the display device that you connected on the drop down list
-3. Select File | Save As and save the file at a convenient location
-4. Copy the file over to the master visualization node. If you use FTP, then ensure that you copy the file as a binary file.
+. Select the display device that you connected on the drop down list
+. Select File | Save As and save the file at a convenient location
+. Copy the file over to the master visualization node. If you use FTP, then ensure 
+that you copy the file as a binary file.
 
-After you get an EDID file, then you need to create an XML template file for the 
-display. Examples are it /etc/vizstack/templates/displays. Note that the display 
-templates need to be propagated to each node, and need to be available at the 
-same path on all the nodes.
+You can also get the EDID using other methods using a desktop or a laptop
+with Linux installed on it. Connect the display device to this system.
+If you have nVidia graphics on this, then you may run the "nvidia-settings"
+command, and get the EDID file from the GUI.
 
-== The VizStack Python API ==
-
-A major part of VizStack is the API. This API is written in the popular programming 
-language, Python. This API is used heavily in VizStack. All application scripts, as 
-well as the remote access scripts are written using it.
-
-The VizJob API exposes an object oriented interface to work with visualization 
-resources. VizStack treats a system as a collection of the following types of 
-visualization resources,
-
-1. GPUs (Graphics Processing Units) : QuadroFX graphics cards, as well as GPUs inside QuadroPlexes
-2. SLI bridges: discrete SLI bridges and ones internal to a  QuadroPlex
-3. Input Devices : keyboards, mice
-4. X Servers : normal and virtual X servers
-
-These resources are exposed directly to programmers using the vsapi. Using the vsapi, 
-a programmer can
-
-1. Allocate a set of resources constituting a visualization job
-2. Free the resources when they are no longer needed
-3. Determine what resources are allocated to which jobs.
-4. Configure X servers in a way that matches application needs
-   a. with one or more screens
-   b. each screen can control one or more GPUs
-   c. GPUs can be configured to drive display devices configured with VizStack
-   d. SLI modes, stereo can be setup
-   e. Optionally, a keyboard and mouse can be used as input devices
-   f. all resources can be configured independently of each other
-5. Start and stop X servers when needed
-   a. more than one X server can be run used on a node
-6. Run application components on chosen X servers/screens
-7. Enable/disable frame lock
-8. Query VizStack's system configuration. This allows an application to enumerate 
-all available resources, and determine what resources may be suitable for the application.
-9. Query runtime configuration
-
-The VizStack scripts viz-rgs, viz-tvnc, viz-avizovr and viz-paraview use the VizStack 
-API, and serve as examples of usage. Documentation for the API can be obtained using 
-regular python mechanisms. 
-
-Example of getting documentation on the python command line
+After you have the EDID file, you need to create an XML file that
+gives VizStack the settings to use for this display device. You could use the
+file for the HP LP3065 monitor as a base. Create a copy of the file HP-LP3065.xml
+in the directory /opt/vizstack/share/templates/displays in
+/etc/vizstack/templates/displays. The template for the LP3065 looks like
 ----
->>> import vsapi
->>> help(vsapi.ResourceAccess)
->>> help(vsapi.Server)
->>> help(vsapi.GPU)
->>> help(vsapi.Screen)
+<?xml version="1.0" ?>
+<display
+ xmlns="http://www.hp.com"
+ xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+ xsi:schemaLocation="http://www.hp.com /opt/vizstack/share/schema/displayconfig.xsd" >
+	<model>HP LP3065</model> <!-- Name you want to use -->
+	<input>digital</input>
+	<edid>/opt/vizstack/share/templates/displays/edids/HP-LP3065.bin</edid>
+	<edid_name>HP LP3065</edid_name> <!-- Name as given in the EDID -->
+	<dimensions>
+		<width>640</width> <!-- width in mm of the display area -->
+		<height>400</height> <!-- height of the display area -->
+		<bezel>
+			<left>26</left> <!-- left bezel in mm -->
+			<right>26</right>
+			<bottom>27.5</bottom>
+			<top>27.5</top>
+		</bezel>
+	</dimensions>
+	<default_mode>2560x1600_60</default_mode>
+	<mode> <!-- first mode 2560x1600 60 Hz -->
+		<type>edid</type>
+		<alias>2560x1600_60</alias>
+		<alias>2560x1600</alias>
+		<width>2560</width>
+		<height>1600</height>
+		<refresh>60</refresh>
+	</mode>
+	<mode> <!-- second mode 1280x800 60 Hz -->
+		<type>edid</type>
+		<alias>1280x800_60</alias>
+		<alias>1280x800</alias>
+		<width>1280</width>
+		<height>800</height>
+		<refresh>60</refresh>
+	</mode>
+</display>
 ----
 
-The directory /opt/vizstack/share/samples contains many commented examples that use 
-the vsapi in a variety of interesting ways.
+Fill the name of your display device in the 'model' node. You will see this
+name when you create tiled displays using 'vs-manage-tiled-displays'.
+
+Fill the 'edid' node with the path to the EDID binary file. We recommend you
+keep the EDID file in the directory /etc/vizstack/templates/displays/edids.
+
+The 'dimensions' node contains information about the physical dimensions
+of the device. If your device is a projector, then it makes sense to
+omit this node. You could measure the width and height of the display
+area of your monitor and fill them in. In the example, the LP3065 is a 
+30" monitor, and its display area measures 64 cm by 40 cm.
+
+You may configure VizStack to skip pixels over the bezels of your monitor.
+Define a 'left', 'right', 'bottom' and 'top' bezel; each of these values
+needs to be entered in millimeters. You could physically measure this, or
+lookup the specs of the monitor. Typically, the left and the right bezels
+are equal, and so are the top and the bottom bezels.
+
+You need to add a 'mode' node for every mode you want to use. You can
+have one or more 'alias' nodes. The content of each 'alias' node is 
+a generic text string which identifies the display mode. It does not
+need to be describe the resolution, but doing so will help your users.
+It is typical to include the refresh rate after the underscore.
+
+The 'width', 'height' and 'refresh' nodes of each 'mode' node need
+to be the actual values for the mode you want to use.
+
+Finally, you need to chose one mode to be a default, and fill one of its
+'alias'es in the 'default_mode' node. Typically, this will be the best
+resolution supported by the device, but it could be anything else also.
+
+Typically, active stereo modes are not listed in the EDID; if you need
+to use such modes with your display device, then you need to define
+a 'modeline' for each such additional mode.
+
+===== Display Device without EDID =====
+
+If your display device does not support EDID, then you will have to
+generate the modelines needed to use it. Look at the templates
+for 'generic-DFP', 'generic-stereo-CRT' and 'generic-CRT' have modelines
+that are suited for generic display devices.
 
 == VizStack Configuration Files ==
 
@@ -1541,16 +1789,16 @@ num_blocks is a two element list [n,m], where n is the number of columns,
 This parameter defines how each block drives displays. gpu blocks can drive one
 or two displays with the following possible layout values
 
-1. [1,1] : Single display
-2. [2,1] or [1,2] : Two displays arranged horizontally or vertically
+. [1,1] : Single display
+. [2,1] or [1,2] : Two displays arranged horizontally or vertically
 
 quadroplex blocks can drive two to four displays with the following possible 
 layout values
 
-1. [2,1] or [1,2] : Two display arranged horizontally or vertically
-2. [2,2] : Four displays in a square configuration
-3. [3,1] or [1,3] : Three displays arranged horizontally or vertically
-4. [4,1] or [1,4] : Four displays arranged horizontally or vertically
+. [2,1] or [1,2] : Two display arranged horizontally or vertically
+. [2,2] : Four displays in a square configuration
+. [3,1] or [1,3] : Three displays arranged horizontally or vertically
+. [4,1] or [1,4] : Four displays arranged horizontally or vertically
 
 ==== display_device ==== 
 
@@ -1567,10 +1815,10 @@ the default display mode for the device is used.
 This parameter defines what stereo mode is used on the tiles. The possible values
 are
 
-1. active : Active stereo, with stereo glasses
-2. passive : Passive stereo. This mode cannot be enabled with a quadroplex block
-3. SeeReal_Stereo_DFP : For use with autostereoscopic DFPs.
-4. Sharp3D_Stereo_DFP : For use with autostereoscopic DFPs.
+. active : Active stereo, with stereo glasses
+. passive : Passive stereo. This mode cannot be enabled with a quadroplex block
+. SeeReal_Stereo_DFP : For use with autostereoscopic DFPs.
+. Sharp3D_Stereo_DFP : For use with autostereoscopic DFPs.
 
 ==== combine_displays ====
 
@@ -1591,10 +1839,33 @@ Causes VizStack to change the order in which it drives the display output ports.
 Use this parameter to define the physical orientation of the display devices. Possible
 values are
 
-1. none
-2. portrait
-3. inverted_portrait
-4. inverted_landscape
+. none
+. portrait
+. inverted_portrait
+. inverted_landscape
+
+==== bezels ====
+
+Use this parameter to specify the default setup of bezels on the tiled display. Note
+that this option has no effect if your are using a projector.
+
+. None or 'all' : Configure bezels on each edge of each display device. This is also
+the default value.
+. 'disable' : Do not configure bezels on the display devices.
+. 'desktop' : Configure desktop style bezels - i.e. the displays on the top row will not
+have the top bezel configured, the displays on the bottom row will not have the bottom
+bezel configured, the displays on the leftmost column will not have the left bezel configured
+and the displays on the rightmost column will not have the right bezel configured. This
+ensures a natural interaction with the tiled display and ensures that the user can
+see the edges of the display which may have important user interface elements.
+
+==== framelock ====
+
+This parameter specifies if frameloock can be enabled on this tiled display. The
+allowed values are
+
+. False : The default. Framelock is not enabled on the tiled display
+. True : Enable framelock on the tiled display.
 
 ==== A Single Tile ====
 
@@ -1617,7 +1888,7 @@ The XML needed to define this is
     </handler_params>
     <resources>
         <reslist>
-            <res><serverconfig><hostname>node1</hostname><serverconfig></res>
+            <res><server><hostname>node1</hostname><server></res>
             <res><gpu><hostname>node1</hostname><index>0</index></gpu></res>
         </reslist>
     </resources>
@@ -1631,8 +1902,9 @@ default resolution and refresh rate i.e. 2560x1600@60 Hz. Also, note the display
 is connected to Port 0 of the GPU (see picture).
 
 The tiled display is called "simple", you would use it with Avizo by using the command line
-
-	# viz_avizovr -t simple
+----
+# viz_avizovr -t simple
+----
 
 The XML for this resource group defines the handler as tiled_display. Currently 
 this is the only supported value. This means that the current resource group defines 
@@ -1666,7 +1938,7 @@ The XML needed for this would be.
     </handler_params>
     <resources>
         <reslist>
-            <res><serverconfig><hostname>node1</hostname><serverconfig></res>
+            <res><server><hostname>node1</hostname><server></res>
             <res><gpu><hostname>node1</hostname><index>0</index></gpu></res>
         </reslist>
     </resources>
@@ -1701,7 +1973,7 @@ The XML needed for this would be
     </handler_params>
     <resources>
         <reslist>
-            <res><serverconfig><hostname>node1</hostname><serverconfig></res>
+            <res><server><hostname>node1</hostname><server></res>
             <res><gpu><hostname>node1</hostname><index>0</index></gpu></res>
             <res><gpu><hostname>node1</hostname><index>1</index></gpu></res>
         </reslist>
@@ -1733,11 +2005,11 @@ be
     </handler_params>
     <resources>
         <reslist>
-            <res><serverconfig><hostname>node1</hostname><serverconfig></res>
+            <res><server><hostname>node1</hostname><server></res>
             <res><gpu><hostname>node1</hostname><index>0</index></gpu></res>
         </reslist>
         <reslist>
-            <res><serverconfig><hostname>node2</hostname><serverconfig></res>
+            <res><server><hostname>node2</hostname><server></res>
             <res><gpu><hostname>node2</hostname><index>1</index></gpu></res> # Note: we're using GPU #1
         </reslist>
     </resources>
@@ -1763,11 +2035,11 @@ layout.  The XML needed is shown below.
     </handler_params>
     <resources>
         <reslist>
-            <res><serverconfig><hostname>node1</hostname><serverconfig></res>
+            <res><server><hostname>node1</hostname><server></res>
             <res><gpu><hostname>node1</hostname><index>0</index></gpu></res>
         </reslist>
         <reslist>
-            <res><serverconfig><hostname>node2</hostname><serverconfig></res>
+            <res><server><hostname>node2</hostname><server></res>
             <res><gpu><hostname>node2</hostname><index>1</index></gpu></res>
         </reslist>
     </resources>
@@ -1849,11 +2121,11 @@ in the XML below.
     </handler_params>
     <resources>
         <reslist>
-            <res><serverconfig><hostname>node1</hostname><serverconfig></res>
+            <res><server><hostname>node1</hostname><server></res>
             <res><gpu><hostname>node1</hostname><index>0</index></gpu></res>
         </reslist>
         <reslist>
-            <res><serverconfig><hostname>node2</hostname><serverconfig></res>
+            <res><server><hostname>node2</hostname><server></res>
             <res><gpu><hostname>node2</hostname><index>1</index></gpu></res>
         </reslist>
     </resources>
@@ -1872,11 +2144,11 @@ We have two nodes, each with two GPUs.  They are connected to a 4x2 tiled displa
  consisting of 8 HP LP3065 monitors.  The user wants to use the displays in 3 
 different ways (more are possible, but these 4 are enough to demonstrate the principles).
 
-1. left-2x2 : Left half using all GPUs on node1
+. left-2x2 : Left half using all GPUs on node1
 
-2. right-2x2 : Right half using all GPUs on node2
+. right-2x2 : Right half using all GPUs on node2
 
-3. center-2x2: 2x2 tiles in the center, but using all GPUs.
+. center-2x2: 2x2 tiles in the center, but using all GPUs.
 
 Note that the four displays on the right are wired in a slightly different way : 
 output port 0 is connected to the monitor on the right, and ouput port 1 is 

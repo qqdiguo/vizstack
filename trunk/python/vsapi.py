@@ -23,7 +23,7 @@ VizStack Job API
 
 import socket
 import os
-import popen2
+import subprocess
 from copy import deepcopy
 from xml.dom import minidom
 import xml
@@ -34,6 +34,8 @@ from slurmlauncher import SLURMLauncher
 from localscheduler import LocalReservation
 from sshscheduler import SSHReservation
 import string
+import copy
+import sys
 
 masterConfigFile = '/etc/vizstack/master_config.xml'
 nodeConfigFile = '/etc/vizstack/node_config.xml'
@@ -73,11 +75,11 @@ def encode_message_with_auth(authType, msg):
 		raise "Only Munge supported at this time"
 
 	# create a auth packet using munge with this content
-	d = popen2.popen2('munge')
-	d[1].write(msg)
-	d[1].close()
-	payload = d[0].read()
-	d[0].close()
+	d = subprocess.Popen('munge', stdout=subprocess.PIPE, stdin=subprocess.PIPE)
+	d.stdin.write(msg)
+	d.stdin.close()
+	payload = d.stdout.read()
+	d.stdout.close()
 	return payload
 
 def decode_message_with_auth(authType, msg):
@@ -86,10 +88,10 @@ def decode_message_with_auth(authType, msg):
 		raise "Only Munge supported at this time"
 
 	# decode the metadata & payload into separate files
-	sp  = popen2.Popen4("unmunge")
-	sp.tochild.write(msg)
-	sp.tochild.close()
-	decoded = sp.fromchild.readlines()
+	sp = subprocess.Popen('unmunge', stdout=subprocess.PIPE, stdin=subprocess.PIPE)
+	sp.stdin.write(msg)
+	sp.stdin.close()
+	decoded = sp.stdout.readlines()
 	errcode = sp.wait()
 
 	if errcode != 0:
@@ -163,8 +165,8 @@ class Schedulable:
 		self.__launcher = launcher
 		self.locality = locality
 
-	def run(self, cmd_string, stdin=None, stdout=None, stderr=None, launcherEnv=None):
-		proc = self.__launcher.run(cmd_string, self.locality, stdin, stdout, stderr, launcherEnv)
+	def run(self, args, inFile=None, outFile=None, errFile=None, launcherEnv=None):
+		proc = self.__launcher.run(args, self.locality, inFile, outFile, errFile, launcherEnv)
 		return proc
 
 	def serializeToXML(self):
@@ -249,33 +251,163 @@ class VizResource:
 		Type is an important property from a user point of view. E.g., gpus of various
 		types are available(FX5800, etc). X Servers can be of multiple types too,
 		"regular" and "virtual". Keyboard and mouse may also come in various varieties.
+
+		VizResources, by default, are not shared. If you want a shared object
+		(typically GPU), you neet to set sharing to True.
 		"""
 		self.resClass = resClass
 		self.resIndex = resIndex
 		self.hostName = hostName
-		self.resType = restType
+		self.resType = resType
+		self.owners = []
+		self.shared = False
+		self.maxShareCount = 1
+		self.allocationBias = 0
+
+	def setShareLimit(self, count):
+		"""
+		Set the maximum number of times this object can be shared.
+		"""
+		if count<1:
+			raise VizError(BAD_OPERATION, "Invalid share count")
+		self.maxShareCount = count
+
+	def getShareLimit(self):
+		"""
+		Return the maximum number of times this object can be shared.
+		"""
+		return self.maxShareCount
+
+	def setShared(self, shared):
+		"""
+		Change the "shared" state of this object.
+		"shared" can be True/False
+		"""
+		if not isinstance(shared, bool):
+			raise TypeError, "Expected boolean, got %s"%(shared.__class__)
+
+		self.shared = shared
+
+	def __checkOwner(self, owner):
+		# Linux-only for now, so we check for UID
+		if owner is None:
+			raise TypeError, "Expecting User ID, got None"
+		if not isinstance(owner, int):
+			raise TypeError, "Expecting integer User ID, got %s"%(owner.__class__)
+		if owner<0:
+			raise TypeError, "User ID cannot be negative"
+
+	def addOwner(self, owner):
+		"""
+		Add the specific owner to the list of owners of this resource.
+		"""
+		self.__checkOwner(owner)
+		self.owners.append(owner)
+
+	def removeOwner(self, owner):
+		"""
+		Remove an owner from the ownership list. Note that an object
+		can be owned by a user multiple times, and this will remove only
+		one instance of ownership.
+		"""
+		self.__checkOwner(owner)
+		try:
+			self.owners.remove(owner)
+		except ValueError, e:
+			raise VizError(VizError.ACCESS_DENIED, "That user does not own this object")
+
+	def getOwners(self):
+		"""
+		Return a list of owners for this object.
+		"""
+		return self.owners
+
+	def isSharable(self):
+		"""
+		An resource is deemed sharable if its share count is >1.
+		A sharable resource can be allocated either shared or exclusive.
+		"""
+		return (self.maxShareCount > 1)
+
+	def isShared(self):
+		"""
+		Is this object allocated for shared use ?
+		"""
+		return self.shared
+
+	def isExclusive(self):
+		"""
+		Is this object allocated for exclusive access ?
+		Unshared => exclusive
+		"""
+		return not self.shared
+
+	def isFree(self):
+		"""
+		Is this object free (completely or partially) ?
+		An object that is allocated "shared" and still has room for allocating
+		out of it is considered "free"
+		"""
+		if self.isShared():
+			maxUsers = self.maxShareCount
+		else:
+			maxUsers = 1
+
+		if len(self.owners)==maxUsers:
+			return False
+
+		return True
+		
+	def canAllocate(self, otherObject):
+		"""
+		Return true if "otherObject" can be allocated out of us.
+		This takes care of sharing cases
+		"""
+		if not self.typeSearchMatch(otherObject):
+			return False
+
+		if not self.isFree():
+			return False
+
+		if otherObject.isShared() and (not self.isSharable()):
+			return False
+
+		if self.isShared() and (not otherObject.isShared()):
+			return False
+
+		return True
+
+	def doAllocate(self, otherObject, userInfo):
+		"""
+		allocate otherObject out of this object.
+		Add userInfo as one of the owners.
+		"""
+		if not self.canAllocate(otherObject):
+			raise VizError(BAD_OPERATION, "Cant allocate")
+		
+		self.addOwner(userInfo)
+
+		if otherObject.isShared():
+			if self.maxShareCount>1: # Sharable ?
+				self.shared = True
+
+	def deallocate(self, otherObject, userInfo):
+		"""
+		deallocate otherObject from this object.
+		Remove userInfo from the owner list.
+		"""
+		self.removeOwner(userInfo)
+
+		# reset to unshared. Note: there's no provision here to have
+		# shared-only objects	
+		if len(self.owners)==0:
+			self.shared = False
 
 	def getType(self):
 		"""
 		Return the type of this resource
 		"""
 		return self.resType
-
-	def typeSearchMatch(self, other):
-		"""
-		Match type of other with us.  If other has a type, and our type matches it, then return True
-		Else return False
-		"""
-		if other.resClass != self.resClass:
-			raise TypeError, "Invalid object passed(%s) for type matching with %s"%(other.resClass, self.resClass)
-
-		if other.resType is None:
-			return True
-
-		if other.resType == self.resType:
-			return True
-
-		return False
 
 	def hashKey(self):
 		"""
@@ -299,6 +431,29 @@ class VizResource:
 			return True
 		return False
 
+	def getAllocationWeight(self):
+		"""
+		Returns a weight to be used by the allocation algorithm.
+		"""
+		wt = self.allocationBias
+
+		if self.resIndex is not None:
+			wt += self.resIndex
+
+		return wt
+
+	def getAllocationBias(self):
+		return self.allocationBias
+
+	def setAllocationBias(self, bias):
+		"""
+		Set a 'bias' value for allocation. This allows for fine tweaking of
+		resource allocation.
+		"""
+		if not isinstance(bias, int):
+			raise TypeError, "Expected integer weight, got %s"%(bias.__class__)
+		self.allocationBias = bias
+
 	def getAllocationDOF(self):
 		"""
 		Returns the "degrees of freedom" an allocator has while allocating this resource.
@@ -319,7 +474,7 @@ class VizResource:
 			ret += 1
 		return (3-ret)
 
-	def searchMatch(self, otherRes):
+	def typeSearchMatch(self, otherRes):
 		"""
 		Method used to match two resources in a search context.
 		if otherRes has specified search items that aren't in us, then we fail.
@@ -348,6 +503,9 @@ class VizResource:
 				return False
 			if self.hostName != otherRes.hostName:
 				return False
+
+		if (otherRes.isShared()) and (not self.isSharable()):
+			return False
 
 		return True
 
@@ -379,7 +537,7 @@ class VizResource:
 		"""
 		return None
 
-	def run(self, cmd, inFile=None, outFile=None, errFile=None, launcherEnv=None):
+	def run(self, args, inFile=None, outFile=None, errFile=None, launcherEnv=None):
 		"""
 		Run a command on this resource.
 		You may optionally specify the standard input, output and error streams for the child process. 
@@ -413,15 +571,45 @@ class VizResource:
 
 	def serializeToXML(self, detailedConfig=True, addrOnly=False):
 		"""
-		Serialize this resource into an XML format.
+		Serialize this resource into an XML format. The base class implementation
+		serializes only some of the info.
 		"""
-		raise UnimplementedError, "This needs to be implemented in the derived class."
+		ret = ""
+		if not addrOnly:
+			for owner in self.owners:
+				 ret = ret + "<owner>%d</owner>"%(owner)
+			ret = ret + "<maxShareCount>%d</maxShareCount>"%(self.maxShareCount)
+			ret = ret + "<shared>%d</shared>"%(self.shared)
+			if self.allocationBias is not None:
+				ret += "<allocationBias>%s</allocationBias>"%(self.allocationBias)
+		return ret
 
 	def deserializeFromXML(self, domNode):
 		"""
 		Restore the state of this resource from a DOM tree
 		"""
-		raise UnimplementedError, "This needs to be implemented in the derived class."
+		ownerNodes = domutil.getChildNodes(domNode, "owner")
+		self.owners = []
+		for ownerNode in ownerNodes:
+			self.addOwner(int(domutil.getValue(ownerNode)))
+
+		node = domutil.getChildNode(domNode, "maxShareCount")
+		if node is not None:
+			self.maxShareCount = int(domutil.getValue(node))
+		else:	
+			self.maxShareCount = 1
+		if self.maxShareCount < 1:
+			raise ValueError, "Failed to deserialize. Invalid maxShareCount."
+
+		node = domutil.getChildNode(domNode, "shared")
+		if node is not None:
+			self.shared = bool(int(domutil.getValue(node)))
+		else:
+			self.shared = False
+
+		node = domutil.getChildNode(domNode, "allocationBias")
+		if node is not None:
+			self.allocationBias = int(domutil.getValue(node))
 
 class Keyboard(VizResource):
 	"""
@@ -434,8 +622,12 @@ class Keyboard(VizResource):
 		self.hostName = None
 		self.resType = None
 		self.physAddr = None
+		self.driver = None
+		self.options = []
 
 	def __init__(self, resIndex=None, hostName=None,keyboardType=None, physAddr=None):
+		VizResource.__init__(self)
+
 		self.resClass = "Keyboard"
 		self.__clearAll()
 		self.resIndex = resIndex
@@ -448,12 +640,15 @@ class Keyboard(VizResource):
 
 	def serializeToXML(self, detailedConfig = True, addrOnly=False):
 		ret = "<%s>"%(Keyboard.rootNodeName)
+		ret += VizResource.serializeToXML(self, detailedConfig, addrOnly)
 		if self.resIndex is not None: ret = ret + "<index>%d</index>"%(self.resIndex)
-		if not addrOnly:
-			if self.physAddr is not None: ret = ret + "<phys_addr>%s</phys_addr>"%(self.physAddr)
 		if self.hostName is not None: ret = ret + "<hostname>%s</hostname>"%(self.hostName)
 		if not addrOnly:
 			if self.resType is not None: ret = ret + "<type>%s</type>"%(self.resType)
+			if self.driver is not None: ret = ret + "<driver>%s</driver>"%(self.driver)
+			for opt in self.options:
+				ret = ret + "<option><name>%s</name><value>%s</value></option>"%(opt['name'],opt['value'])
+			if self.physAddr is not None: ret = ret + "<phys_addr>%s</phys_addr>"%(self.physAddr)
 		ret += "</%s>"%(Keyboard.rootNodeName)
 		return ret
 
@@ -462,6 +657,9 @@ class Keyboard(VizResource):
 			raise ValueError, "Failed to deserialize Keyboard. Incorrect deserialization attempt."
 
 		self.__clearAll()
+
+		# Deserialize the base class info
+		VizResource.deserializeFromXML(self, domNode)
 
 		hostNameNode = domutil.getChildNode(domNode, "hostname")
 		if hostNameNode is not None:
@@ -474,6 +672,20 @@ class Keyboard(VizResource):
 		typeNode = domutil.getChildNode(domNode, "type")
 		if typeNode is not None:
 			self.resType = domutil.getValue(typeNode)
+
+		driverNode = domutil.getChildNode(domNode, "driver")
+		if driverNode is not None:
+			self.driver = domutil.getValue(driverNode)
+
+		optNodes = domutil.getChildNodes(domNode, "option")
+		for optNode in optNodes:
+			opt = {}
+			optName = domutil.getValue(domutil.getChildNode(optNode, "name"))
+			optVal = domutil.getValue(domutil.getChildNode(optNode, "value"))
+			opt['name']=optName
+			opt['value']=optVal
+			self.options.append(opt)
+			self.driver = domutil.getValue(driverNode)
 
 		physNode = domutil.getChildNode(domNode, "phys_addr")
 		if physNode is not None:
@@ -490,8 +702,11 @@ class Mouse(VizResource):
 		self.hostName = None
 		self.resType = None
 		self.physAddr = None
+		self.driver = None
+		self.options = []
 
 	def __init__(self, resIndex=None, hostName=None,mouseType=None, physAddr=None):
+		VizResource.__init__(self)
 		self.resClass = "Mouse"
 		self.__clearAll()
 		self.resIndex = resIndex
@@ -504,12 +719,15 @@ class Mouse(VizResource):
 
 	def serializeToXML(self, detailedConfig = True, addrOnly=False):
 		ret = "<%s>"%(Mouse.rootNodeName)
+		ret += VizResource.serializeToXML(self, detailedConfig, addrOnly)
 		if self.resIndex is not None: ret = ret + "<index>%d</index>"%(self.resIndex)
-		if not addrOnly:
-			if self.physAddr is not None: ret = ret + "<phys_addr>%s</phys_addr>"%(self.physAddr)
 		if self.hostName is not None: ret = ret + "<hostname>%s</hostname>"%(self.hostName)
 		if not addrOnly:
 			if self.resType is not None: ret = ret + "<type>%s</type>"%(self.resType)
+			if self.driver is not None: ret = ret + "<driver>%s</driver>"%(self.driver)
+			for opt in self.options:
+				ret = ret + "<option><name>%s</name><value>%s</value></option>"%(opt['name'],opt['value'])
+			if self.physAddr is not None: ret = ret + "<phys_addr>%s</phys_addr>"%(self.physAddr)
 		ret += "</%s>"%(Mouse.rootNodeName)
 		return ret
 
@@ -518,6 +736,9 @@ class Mouse(VizResource):
 			raise ValueError, "Failed to deserialize Keyboard. Incorrect deserialization attempt."
 
 		self.__clearAll()
+
+		# Deserialize the base class info
+		VizResource.deserializeFromXML(self, domNode)
 
 		hostNameNode = domutil.getChildNode(domNode, "hostname")
 		if hostNameNode is not None:
@@ -530,6 +751,20 @@ class Mouse(VizResource):
 		typeNode = domutil.getChildNode(domNode, "type")
 		if typeNode is not None:
 			self.resType = domutil.getValue(typeNode)
+
+		driverNode = domutil.getChildNode(domNode, "driver")
+		if driverNode is not None:
+			self.driver = domutil.getValue(driverNode)
+
+		optNodes = domutil.getChildNodes(domNode, "option")
+		for optNode in optNodes:
+			opt = {}
+			optName = domutil.getValue(domutil.getChildNode(optNode, "name"))
+			optVal = domutil.getValue(domutil.getChildNode(optNode, "value"))
+			opt['name']=optName
+			opt['value']=optVal
+			self.options.append(opt)
+			self.driver = domutil.getValue(driverNode)
 
 		physNode = domutil.getChildNode(domNode, "phys_addr")
 		if physNode is not None:
@@ -571,7 +806,7 @@ class VizResourceAggregate(VizResource):
 		raise "getAllocationDOF must not be called for this class"
 
 class DisplayDevice(VizResource):
-	rootNodeName = "displayconfig"
+	rootNodeName = "display"
 
 	def __str__(self):
 		return self.__repr__()
@@ -601,15 +836,106 @@ class DisplayDevice(VizResource):
 		self.resType = None
 		self.hostName = None
 
-		self.vendor = None
 		self.input = None
 		self.edid = None
+		self.edidBytes = None
+		self.edid_name = None
 		self.hsync_min = None
 		self.hsync_max = None
 		self.vrefresh_min = None
 		self.vrefresh_max = None
 		self.default_mode = None
 		self.modes = []
+
+		self.dimensions = None # Dimensions of the display. Two element [w,h]
+		self.bezel = None # Bezel - four elements [left, right, bottom, top]
+
+	def getDimensions(self):
+		"""
+		Get the physical dimensions of this display device (width, height)	
+		in millimeters
+		"""
+		return self.dimensions
+
+	def setDimensions(self, dimensions):
+		"""
+		Set the physical dimensions of this display device (width, height)
+		in millimeters
+		"""
+		if dimensions is None:
+			self.dimensions = None
+			return
+
+		if not isinstance(dimensions, list):
+			raise TypeError, "Expect a list"
+
+		if len(dimensions)!=2:
+			raise ValueError, "Expect a two element list. Got %s"%(dimensions)
+
+		for dim in dimensions:
+			if isinstance(dim, int) or isinstance(dim, float) or isinstance(dim, long):
+				if dim<0:
+					raise ValueError, "Dimension(%s) cannot be negative"%(dim)
+			else:
+				raise TypeError, "Dimension(%s) has be a number"%(dim)
+
+		self.dimensions = dimensions
+
+	def getEDIDDisplayName(self):
+		"""
+		Return the name by which the display identifies itself in the EDID
+		Returns None of the display has no EDID.
+		"""
+		return self.edid_name
+
+	def getBezel(self):
+		return self.bezel
+
+	def setBezel(self, bezel):
+		if bezel is None:
+			self.bezel = None
+			return
+
+		if not isinstance(bezel, list):
+			raise TypeError, "Expect a list"
+
+		if len(bezel)!=4:
+			raise ValueError, "Expect a four element list. Got %s"%(bezel)
+
+		for val in bezel:
+			if isinstance(val, int) or isinstance(val, float) or isinstance(val, long):
+				if val<0:
+					raise ValueError, "Bezel dimension(%s) cannot be negative"%(val)
+			else:
+				raise TypeError, "Bezel dimension(%s) has be a number"%(val)
+
+		self.bezel = bezel
+
+	def getInput(self):
+		return self.input
+
+	def setEDIDDisplayName(self, name):
+		self.edid_name = name
+
+	def setEDIDBytes(self, value):
+		self.edidBytes = value
+
+	def getEDIDBytes(self):
+		return self.edidBytes
+
+	def setHSyncRange(self, value):
+		self.hsync_min = value[0]
+		self.hsync_max = value[1]
+
+	def setVRefreshRange(self, value):
+		self.vrefresh_min = value[0]
+		self.vrefresh_max = value[1]
+
+	def getHSyncRange(self):
+		return [self.hsync_min, self.hsync_max]
+
+	def getVRefreshRange(self):
+		return [self.vrefresh_min, self.vrefresh_max]
 
 	def getAllModes(self):
 		return deepcopy(self.modes)
@@ -698,26 +1024,23 @@ class DisplayDevice(VizResource):
 		return bestMatchingMode
 				
 	def __init__(self, model=None):
+		VizResource.__init__(self)
 		self.__clearAll()
 		self.resClass = DisplayDevice.rootNodeName
 		self.resType = model
-
-	def getVendor(self):
-		"""
-		Return the vendor name of this display device.
-		"""
-		return self.vendor
 
 	def serializeToXML(self, detailedConfig=True, addrOnly=False):
 		ret = "<%s>"%(DisplayDevice.rootNodeName)
 		if self.resType is not None:
 			ret += "<model>%s</model>"%(self.resType)
-		if self.vendor is not None:
-			ret += "<vendor>%s</vendor>"%(self.vendor)
 		if self.input is not None:
 			ret += "<input>%s</input>"%(self.input)
 		if self.edid is not None:
 			ret += "<edid>%s</edid>"%(self.edid)
+		if self.edidBytes is not None:
+			ret += "<edidBytes>%s</edidBytes>"%(self.edidBytes)
+		if self.edid_name is not None:
+			ret += "<edid_name>%s</edid_name>"%(self.edid_name)
 		if (self.hsync_min is not None) or (self.hsync_max is not None):
 			ret += "<hsync>"
 			if self.hsync_min is not None:
@@ -732,6 +1055,18 @@ class DisplayDevice(VizResource):
 			if self.vrefresh_max is not None:
 				ret += "<max>%s</max>"%(self.vrefresh_max)
 			ret += "</vrefresh>"
+		if self.dimensions is not None:
+			ret += "<dimensions>"
+			ret += "<width>%f</width>"%(self.dimensions[0])
+			ret += "<height>%f</height>"%(self.dimensions[1])
+			if self.bezel is not None:
+				ret += "<bezel>"
+				ret += "<left>%f</left>"%(self.bezel['left'])
+				ret += "<right>%f</right>"%(self.bezel['right'])
+				ret += "<bottom>%f</bottom>"%(self.bezel['bottom'])
+				ret += "<top>%f</top>"%(self.bezel['top'])
+				ret += "</bezel>"
+			ret += "</dimensions>"
 		if self.default_mode is not None:
 			ret += "<default_mode>%s</default_mode>"%(self.default_mode)
 		for thisMode in self.modes:
@@ -741,11 +1076,53 @@ class DisplayDevice(VizResource):
 			ret += "<width>%d</width>"%(thisMode['width'])
 			ret += "<height>%d</height>"%(thisMode['height'])
 			ret += "<refresh>%s</refresh>"%(thisMode['refresh'])
+			if thisMode['value'] is not None:
+				ret += "<value>%s</value>"%(thisMode['value'])
+			# Serialize the bezel info for this mode. Note that
+			# values not provided in the config file can end up
+			# defined here as a result of computation
+			if thisMode.has_key('bezel'):
+				ret += "<bezel>"
+				for bpos in ['left','right','bottom','top']:
+					if thisMode['bezel'].has_key(bpos):
+						ret += "<%s>%d</%s>"%(bpos, thisMode['bezel'][bpos], bpos)
+				ret += "</bezel>"
 			ret += "</mode>"
 
 		ret += "</%s>"%(DisplayDevice.rootNodeName)
 
 		return ret
+
+	def addMode(self, modeType, modeAlias, modeWidth, modeHeight, modeRefresh, modeValue=None):
+		# Parameter validation
+		# mode width must be a multiple of 8
+		if (modeWidth%8)!=0:
+			raise ValueError, "Display mode width(%d) must be a multiple of 8"%(modeWidth)
+
+		if self.modes is None:
+			self.modes = []
+		thisMode = {}
+		thisMode['type'] = modeType
+		thisMode['alias'] = modeAlias
+		thisMode['width'] = modeWidth
+		thisMode['height'] = modeHeight
+		thisMode['refresh'] = modeRefresh
+		thisMode['value'] = modeValue
+		self.modes.append(thisMode)
+
+	def setInput(self, inputType):
+		if inputType not in GPU.ScanTypes:
+			raise ValueError, "Incorrect inputType '%s'. Expected one of %s"%(inputType, GPU.ScanTypes)
+		self.input = inputType
+
+	def setDefaultMode(self, mode):
+		self.default_mode = mode
+
+	def getEDIDFileName(self):
+		return self.edid
+
+	def setEDIDFileName(self, fname):
+		self.edid = fname
 
 	def deserializeFromXML(self, domNode):
 		self.__clearAll()
@@ -756,15 +1133,18 @@ class DisplayDevice(VizResource):
 		tNode = domutil.getChildNode(domNode, 'model')
 		if tNode is not None:
 			self.resType = domutil.getValue(tNode)
-		tNode = domutil.getChildNode(domNode, 'vendor')
-		if tNode is not None:
-			self.vendor = domutil.getValue(tNode)
 		tNode = domutil.getChildNode(domNode, 'input')
 		if tNode is not None:
 			self.input = domutil.getValue(tNode)
 		tNode = domutil.getChildNode(domNode, 'edid')
 		if tNode is not None:
 			self.edid = domutil.getValue(tNode)
+		tNode = domutil.getChildNode(domNode, 'edidBytes')
+		if tNode is not None:
+			self.edidBytes = domutil.getValue(tNode)
+		tNode = domutil.getChildNode(domNode, 'edid_name')
+		if tNode is not None:
+			self.edid_name = domutil.getValue(tNode)
 		tNode = domutil.getChildNode(domNode, 'hsync')
 		if tNode is not None:
 			minNode = domutil.getChildNode(tNode, 'min')
@@ -777,6 +1157,18 @@ class DisplayDevice(VizResource):
 			self.vrefresh_min = domutil.getValue(minNode)
 			maxNode = domutil.getChildNode(tNode, 'max')
 			self.vrefresh_max = domutil.getValue(maxNode)
+		tNode = domutil.getChildNode(domNode, 'dimensions')
+		if tNode is not None:
+			widthNode = domutil.getChildNode(tNode, 'width')
+			heightNode = domutil.getChildNode(tNode, 'height')
+			self.dimensions = [ float(domutil.getValue(widthNode)), float(domutil.getValue(heightNode))]
+			tNode = domutil.getChildNode(tNode, "bezel")
+			if tNode is not None:
+				leftNode = domutil.getChildNode(tNode, 'left')
+				rightNode = domutil.getChildNode(tNode, 'right')
+				bottomNode = domutil.getChildNode(tNode, 'bottom')
+				topNode = domutil.getChildNode(tNode, 'top')
+				self.bezel = {'left': float(domutil.getValue(leftNode)), 'right':float(domutil.getValue(rightNode)),'bottom':float(domutil.getValue(bottomNode)), 'top':float(domutil.getValue(topNode))}
 		tNode = domutil.getChildNode(domNode, 'default_mode')
 		if tNode is not None:
 			self.default_mode = domutil.getValue(tNode)
@@ -791,6 +1183,35 @@ class DisplayDevice(VizResource):
 			thisMode['height'] = int(domutil.getValue(tNode))
 			tNode = domutil.getChildNode(modeNode, 'refresh')
 			thisMode['refresh'] = domutil.getValue(tNode)
+			tNode = domutil.getChildNode(modeNode, 'value')
+			if tNode is not None:
+				thisMode['value'] = domutil.getValue(tNode)
+			else:
+				thisMode['value'] = None
+
+			# Compute the bezel
+			thisMode['bezel'] = {'left':0, 'right':0, 'bottom':0, 'top':0}
+			# If dimensions and bezel both are specified, then we can compute
+			# the bezel size in pixels, given the resolution
+			# more than half a pixel sends the bezel over the the higher value
+			if (self.dimensions is not None) and (self.bezel is not None):
+				hDPMM = thisMode['width']/self.dimensions[0] # dots per mm
+				vDPMM = thisMode['height']/self.dimensions[1] # dots per mm
+				for bpos in ['left','right']:
+					if self.bezel[bpos] is not None:
+						thisMode['bezel'][bpos] = int((hDPMM*self.bezel[bpos])+0.5) 
+				for bpos in ['bottom','top']:
+					if self.bezel[bpos] is not None:
+						thisMode['bezel'][bpos] = int((vDPMM*self.bezel[bpos])+0.5)
+
+			# Override with any bezel values given
+			tNode = domutil.getChildNode(modeNode, 'bezel')
+			if tNode is not None:
+				for bpos in ['left','right', 'bottom','top']:
+					bpNode = domutil.getChildNode(tNode, bpos)
+					if bpNode is not None:
+						thisMode['bezel'][bpos] = int(domutil.getValue(bpNode))
+				
 			# We replicate this mode multiple times
 			for tNode in domutil.getChildNodes(modeNode, 'alias'):
 				thisMode['alias'] = domutil.getValue(tNode)
@@ -809,31 +1230,35 @@ class GPU(VizResource):
 
 	rootNodeName = "gpu"
 
-	ScanTypes = ["DVI", "VGA"]
+	ScanTypes = ["digital", "analog"]
 
 	def __clearAll(self):
 		self.resIndex = None 
 		self.busID = None
 		self.resType = None
 		self.hostName = None
-		self.scanout = { 0: None, 1: None }
+		self.scanout = { }
 		self.schedulable = None
 
 		# GPUs, by default, don't have a preference about using a scanout
 		self.useScanOut = None
+		self.allowNoScanOut = True # GPUs support 'noscanout', unless mentioned otherwise
+		self.allowStereo = None
 
 		# properties from the GPU template
 		# resType => model
 		self.vendor = None
-		self.pci_device_type = None
-		self.pci_device_id = None
-		self.pci_vendor_id = None
 		self.scanoutCaps = None
 		self.max_width = None
 		self.max_height = None
 
 		# Optional resource access for validation
 		self.ra = None
+
+		# Not shared by default
+		self.sharedServer = Server()
+		self.sharedServer.setShared(True)
+		self.sharedServerIndex = None
 
 	def __str__(self):
 		return self.__repr__()
@@ -862,23 +1287,73 @@ class GPU(VizResource):
 		else:
 			ret = ret + "%s"%(self.busID)
 
+		if self.isSharable():
+			ret = ret + " sharable maxCount=%d"%(self.maxShareCount)
+
+		if self.isShared():
+			ret = ret + " shared"
+
+		if self.getAllowStereo():
+			ret = ret + " stereo"
 		ret = ret + " >"
 		return ret
 
 	def setBusId(self, busID):
 		self.busID = busID
 
+	def getBusId(self):
+		return self.busID
+
 	def isSchedulable(self):
 		return True
 
-	def run(self, cmd, stdin=None, stdout=None, stderr=None, launcherEnv=None):
+	def run(self, args, inFile=None, outFile=None, errFile=None, launcherEnv=None):
 		if self.schedulable is None:
 			raise VizError(VizError.INVALID_OPERATION, "Cannot run() on a GPU which is not scheduled!")
+		cmd_args = copy.copy(args)
+		cmd_args = ["/usr/bin/env", "GPU_INDEX=%d"%(self.resIndex)]+cmd_args
+		return self.schedulable.run(cmd_args, inFile, outFile, errFile, launcherEnv)
 
-		return self.schedulable.run("/usr/bin/env GPU_INDEX=%d %s"%(self.resIndex, cmd), stdin, stdout, stderr, launcherEnv)
+	def doAllocate(self, otherObject, userInfo):
+		"""
+		On allocation, we need to add the owner of the
+		allocation as an owner of the X server
+		"""
+		VizResource.doAllocate(self, otherObject, userInfo)
+		self.sharedServer.addOwner(userInfo)
+		#print 'Post addition, owners for shared GPU %s are : %s. Added owner=%s'%(self.hashKey(), self.sharedServer.getOwners(), userInfo)
 
-	def __init__(self, resIndex=None, hostName = None, model=None, busID=None, useScanOut=None):
+	def deallocate(self, otherObject, userInfo):
+		"""
+		On deallocation, we need to remove the owner of the
+		allocation from the list of owners of the X server
+		"""
+		#print 'Pre removal, owners for shared GPU %s are : %s. Removed owner = %s'%(self.hashKey(), self.sharedServer.getOwners(), userInfo)
+		self.sharedServer.removeOwner(userInfo)
+		VizResource.deallocate(self, otherObject, userInfo)
 
+	def setShareLimit(self, shareCount):
+		VizResource.setShareLimit(self, shareCount)
+		self.sharedServer.setShareLimit(shareCount)
+
+	def getSharedServer(self):
+		return self.sharedServer
+
+	def getSharedServerIndex(self):
+		return self.sharedServerIndex
+
+	def setSharedServerIndex(self, serverIndex):
+		"""
+		Set the index of the shared server associated with this GPU.
+		"""
+		self.sharedServerIndex = serverIndex
+		self.sharedServer.setShared(True)
+		self.sharedServer.setHostName(self.getHostName())
+		self.sharedServer.setShareLimit(self.getShareLimit())
+		self.sharedServer.setIndex(self.sharedServerIndex)
+
+	def __init__(self, resIndex=None, hostName = None, model=None, busID=None, useScanOut=None, isShared=False):
+		VizResource.__init__(self)
 		self.resClass = "GPU"
 		self.__clearAll()
 
@@ -902,8 +1377,9 @@ class GPU(VizResource):
 		self.resType = model         # Model Name of the GPU - e.g. Quadro FX 5800
 		self.hostName = hostName   # Hostname on which this GPU exists.
 		self.useScanOut = useScanOut
+		self.setShared(isShared)
 
-	def searchMatch(self, otherRes):
+	def typeSearchMatch(self, otherRes):
 		"""
 		Method used to match two resources in a search context.
 		if otherRes has specified search items that aren't in us, then we fail.
@@ -914,34 +1390,25 @@ class GPU(VizResource):
 		care about scanout"(None)
 
 		"""
-		if not isinstance(otherRes, VizResource):
-			raise ValueError, "%s : You're trying to compare apples(%s) to trees(%s), my friend!"%(self.resClass, self, otherRes)
-
-		if otherRes.resClass != self.resClass:
+		if not VizResource.typeSearchMatch(self, otherRes):
 			return False
 
-		if otherRes.resIndex is not None:
-			if self.resIndex is None:
-				return False
-			if self.resIndex != otherRes.resIndex:
-				return False
-
-		if otherRes.resType is not None:
-			if self.resType is None:
-				return False
-			if self.resType != otherRes.resType:
-				return False
-		
-		if otherRes.hostName is not None:
-			if self.hostName is None:
-				return False
-			if self.hostName != otherRes.hostName:
-				return False
-
 		if otherRes.useScanOut is not None:
-			if self.useScanOut is None:
-				return False
-			if self.useScanOut != otherRes.useScanOut:
+			# if useScanOut == 1, then the GPU needs to have scanouts capabilityto
+			# be considered matching
+			if (otherRes.useScanOut==1) and (self.scanoutCaps is not None) and (self.useScanOut==1):
+				return True
+			# if useScanOut == 0, then the GPU must _not_ have scanout capability to
+			# be considered matching
+			elif (otherRes.useScanOut==0) and ((self.scanoutCaps is None) or (self.useScanOut==0)):
+				return True
+			# to treat scanout or no scanout as "don't care", set it to
+			# None (i.e. the default value)
+			return False
+
+		if otherRes.allowStereo is not None:
+			# If stereo is required, and we don't have it, then we fail.
+			if (self.allowStereo==False) and (otherRes.allowStereo==True):
 				return False
 
 		return True
@@ -991,11 +1458,47 @@ class GPU(VizResource):
 	def getSchedulable(self):
 		return self.schedulable
 
+	def addScanoutCap(self, port_index, output_type):
+		if self.scanoutCaps is None:
+			self.scanoutCaps = {}
+		if not self.scanoutCaps.has_key(port_index):
+			self.scanoutCaps[port_index] = []
+
+		if output_type not in GPU.ScanTypes:
+			raise ValueError, "Unexpected scanout type '%s'. Expected one of %s"%(output_type, GPU.ScanTypes)
+
+		self.scanoutCaps[port_index].append(output_type)
+
+	def getScanoutCaps(self):
+		return self.scanoutCaps
+
+	def setScanoutCaps(self, caps):
+		self.scanoutCaps = copy.deepcopy(caps)
+
+	def setMaxFBWidth(self, value):
+		self.max_width = value
+
+	def getMaxFBWidth(self):
+		return self.max_width
+
+	def getMaxFBHeight(self):
+		return self.max_height
+
+	def setMaxFBHeight(self, value):
+		self.max_height = value
+
+	def getVendor(self):
+		return self.vendor
+
+	def setVendor(self, value):
+		self.vendor = value
+	
 	def serializeToXML(self, detailedConfig = True, addrOnly=False):
 		"""
 		NOTE: detailedConfig triggers serialization of schedulable information.
 		"""
 		ret = "<%s>"%(GPU.rootNodeName)
+		ret += VizResource.serializeToXML(self, detailedConfig, addrOnly)
 
 		if self.hostName is not None:
 			ret = ret + "<hostname>%s</hostname>"%(self.hostName)
@@ -1004,22 +1507,32 @@ class GPU(VizResource):
 			ret = ret + "<index>%d</index>"%(self.resIndex)
 
 		if not addrOnly:
-			if self.resType != None:
+			if self.sharedServerIndex is not None:
+				ret = ret + "<sharedServerIndex>%d</sharedServerIndex>"%(self.sharedServerIndex)
+				# Add configuration of the shared server, if present
+				if self.sharedServer is not None:
+					ret = ret + self.sharedServer.serializeToXML()
+
+			if self.resType is not None:
 				ret = ret + "<model>%s</model>"%(self.resType)
 
-			if self.busID != None:
+			if self.busID is not None:
 				ret = ret + "<busID>%s</busID>"%(self.busID)
 
-			if self.useScanOut != None:
+			if self.useScanOut is not None:
 				ret = ret + "<useScanOut>%d</useScanOut>"%(self.useScanOut)
+
+			if self.allowNoScanOut is not None:
+				ret = ret + "<allowNoScanOut>%d</allowNoScanOut>"%(self.allowNoScanOut)
+
+			if self.allowStereo is not None:
+				ret = ret + "<allowStereo>%d</allowStereo>"%(self.allowStereo)
 
 			# serialize scanouts
 			scanoutKeys = self.scanout.keys()
 			scanoutKeys.sort()
 			for scanout_index in scanoutKeys:
 				scanout = self.scanout[scanout_index]
-				if scanout is None:
-					continue
 				ret = ret + "<scanout>"
 				ret = ret + "<port_index>%d</port_index>"%(scanout_index)
 				if scanout.has_key('type'):
@@ -1048,12 +1561,6 @@ class GPU(VizResource):
 			# serialize other template properties
 			if self.vendor is not None:
 				ret += "<vendor>%s</vendor>"%(self.vendor)
-			if self.pci_device_type is not None:
-				ret += "<pci_device_type>%s</pci_device_type>"%(self.pci_device_type)
-			if self.pci_device_id is not None:
-				ret += "<pci_device_id>%s</pci_device_id>"%(self.pci_device_id)
-			if self.pci_vendor_id is not None:
-				ret += "<pci_vendor_id>%s</pci_vendor_id>"%(self.pci_vendor_id)
 			if self.scanoutCaps is not None:
 				for idx in self.scanoutCaps:
 					ret += "<scanout_caps>"
@@ -1072,6 +1579,20 @@ class GPU(VizResource):
 		ret = ret + "</%s>"%(GPU.rootNodeName)
 		return ret
 
+	def getAllowNoScanOut(self):
+		return self.allowNoScanOut
+
+	def setAllowNoScanOut(self, value):
+		self.allowNoScanOut = value
+
+	def getAllowStereo(self):
+		return self.allowStereo
+
+	def setAllowStereo(self, value):
+		if value is not None and not isinstance(value, bool):
+			raise TypeError, "Expected None or boolean. Got '%s'"%(value)
+		self.allowStereo = value
+
 	def deserializeFromXML(self, domNode):
 		"""
 		Deserialize from XML, essentially recreating the whole object again.
@@ -1080,6 +1601,9 @@ class GPU(VizResource):
 
 		if domNode.nodeName != GPU.rootNodeName:
 			raise ValueError, "Faild deserialize GPU. Programmatic error."
+
+		# Deserialize the base class info
+		VizResource.deserializeFromXML(self, domNode)
 
 		hostnameNode = domutil.getChildNode(domNode, "hostname")
 		if hostnameNode is not None:
@@ -1099,7 +1623,40 @@ class GPU(VizResource):
 
 		scanOutNode = domutil.getChildNode(domNode, "useScanOut")
 		if scanOutNode != None:
-			self.useScanOut = bool(domutil.getValue(scanOutNode))
+			self.useScanOut = bool(int(domutil.getValue(scanOutNode)))
+
+		scanOutNode = domutil.getChildNode(domNode, "allowNoScanOut")
+		if scanOutNode != None:
+			self.allowNoScanOut = bool(int(domutil.getValue(scanOutNode)))
+
+		stereoNode = domutil.getChildNode(domNode, "allowStereo")
+		if stereoNode != None:
+			self.allowStereo = bool(int(domutil.getValue(stereoNode)))
+
+		# Create the shared X server here if it exists.
+		sharedServerNode = domutil.getChildNode(domNode, Server.rootNodeName)
+		if sharedServerNode is not None:
+			self.sharedServer.deserializeFromXML(sharedServerNode)
+			self.sharedServer.setShareLimit(self.getShareLimit())
+
+		# Get the shared server index
+		indexNode = domutil.getChildNode(domNode, "sharedServerIndex")
+		if indexNode is not None:
+			self.setSharedServerIndex(int(domutil.getValue(indexNode)))
+		elif self.sharedServer is not None:
+			self.sharedServerIndex = self.sharedServer.getIndex()
+
+		# deserialize scanout caps before scanouts. This will
+		# help us validate the scanouts
+		vNodes = domutil.getChildNodes(domNode, "scanout_caps")
+		for tNode in vNodes:
+			thisScanoutCap = []
+			scanIndex = int(domutil.getValue(domutil.getChildNode(tNode, "index")))
+			for typeNode in domutil.getChildNodes(tNode, "type"):
+				thisScanoutCap.append(domutil.getValue(typeNode))
+			if self.scanoutCaps is None:
+				self.scanoutCaps = {}
+			self.scanoutCaps[scanIndex] = thisScanoutCap
 
 		# deserialize scanouts
 		scanoutNodes = domutil.getChildNodes(domNode, "scanout")
@@ -1110,8 +1667,10 @@ class GPU(VizResource):
 				raise ValueError, "Failed to deserialize : Scanout needs a port index"
 			try:
 				portIndex = int(domutil.getValue(portIndexNode))
-				if (portIndex<0) or (portIndex > len(self.scanout)):
-					raise ValueError, "Port index out of range"
+				if (portIndex<0):
+					raise ValueError, "Bad value of port index. This can't be negative."
+				if (self.scanoutCaps is not None) and (portIndex>len(self.scanoutCaps)):
+					raise ValueError, "Port index(%d) has to be less than the number of scanouts supported(%d)"%(portIndex, len(self.scanoutCaps))
 			except ValueError:
 				raise ValueError, "Failed to deserialize : Bad value for port index"
 
@@ -1171,25 +1730,6 @@ class GPU(VizResource):
 		tNode = domutil.getChildNode(domNode, "vendor")
 		if tNode is not None:
 			self.vendor = domutil.getValue(tNode)
-		tNode = domutil.getChildNode(domNode, "pci_device_type")
-		if tNode is not None:
-			self.pci_device_type = domutil.getValue(tNode)
-		tNode = domutil.getChildNode(domNode, "pci_device_id")
-		if tNode is not None:
-			self.pci_device_id = domutil.getValue(tNode)
-		tNode = domutil.getChildNode(domNode, "pci_vendor_id")
-		if tNode is not None:
-			self.pci_vendor_id = domutil.getValue(tNode)
-
-		vNodes = domutil.getChildNodes(domNode, "scanout_caps")
-		for tNode in vNodes:
-			thisScanoutCap = []
-			scanIndex = int(domutil.getValue(domutil.getChildNode(tNode, "index")))
-			for typeNode in domutil.getChildNodes(tNode, "type"):
-				thisScanoutCap.append(domutil.getValue(typeNode))
-			if self.scanoutCaps is None:
-				self.scanoutCaps = {}
-			self.scanoutCaps[scanIndex] = thisScanoutCap
 
 		limitNode = domutil.getChildNode(domNode, "limits")
 		if limitNode is not None:
@@ -1197,8 +1737,20 @@ class GPU(VizResource):
 			self.max_height = int(domutil.getValue(domutil.getChildNode(limitNode, "max_height")))
 
 	def getScanouts(self):
-		return self.scanout
-		
+		ret = {}
+		for pi in self.scanout.keys():
+			ret[pi]=self.scanout[pi]
+		return ret
+
+	def clearScanouts(self):
+		"""
+		Clear all scanouts defined for this GPU
+		"""
+		self.scanout.clear()
+
+	def clearScanout(self, port_index):
+		self.scanout.pop(port_index)
+
 	def setScanout(self, port_index, display_device, scan_type=None, mode=None, outputX=0, outputY=0, outputWidth=None, outputHeight=None):
 		"""
 		Sets a scanout on this GPU.
@@ -1215,13 +1767,8 @@ class GPU(VizResource):
 			raise ValueError, "You're not allowed to configure scanouts on this GPU."
 
 		# Check the port index. If we have the GPU information with us, use that to validate
-		if self.scanoutCaps is None:
-			max_ports = 3 # The limits of the 5800
-		else:
-			max_ports = len(self.scanoutCaps)
-		
-		if port_index>=max_ports:
-			raise ValueError, "Port index specified is %d. This needs to be less than %d."%(port_index, max_ports)
+		if (self.scanoutCaps is not None) and (port_index>=len(self.scanoutCaps)):
+			raise ValueError, "Port index specified is %d. This needs to be less than %d."%(port_index, len(self.scanoutCaps))
 
 		if outputX is None:
 			raise ValueError, "Expect integer for outputX, Can't pass None"
@@ -1338,6 +1885,31 @@ class GPU(VizResource):
 	def getHostName(self):
 		return self.hostName
 
+	def getAllocationWeight(self):
+		"""
+		Returns a weight to be used by the allocation algorithm.
+		"""
+		totalWeight = VizResource.getAllocationWeight(self)
+
+		if (self.useScanOut is not None) and (self.useScanOut==1):
+			# Every scanout that this is capable of adds 100 to 
+			# the weight
+			if self.scanoutCaps is not None:
+				for sc in self.scanoutCaps.keys():
+					totalWeight += 100
+			
+			# add 100 for every connected display device
+			for scanoutIndex in self.scanout.keys():
+				totalWeight += 100
+
+		# A shared GPU decrements the weight by number of users that can 
+		# additionally access the GPU. This ensures that shared GPUs are chosen
+		# earlier if needed.
+		if self.isShared():
+			totalWeight = totalWeight - (self.getShareLimit()-len(self.getOwners()))
+
+		return totalWeight
+
 class SLI(VizResource):
 
 	rootNodeName = "sli"
@@ -1352,6 +1924,7 @@ class SLI(VizResource):
 		self.mode = None
 
 	def __init__(self, resIndex=None, hostName = None, sliType=None, gpu0=None, gpu1=None):
+		VizResource.__init__(self)
 		self.resClass = "SLI"
 		self.__clearAll()
 		self.resIndex = resIndex
@@ -1395,7 +1968,7 @@ class SLI(VizResource):
 	def setMode(self, mode):
 		if mode not in SLI.validModes:
 			raise ValueError, "Invalid value for mode '%s'. Expecting one of %s."%(mode, validModes)
-		if (mode == "mosaic") and (self.resType != "quadroplex"):
+		if (self.resType is not None) and (mode == "mosaic") and (self.resType != "quadroplex"):
 			raise ValueError, "SLI mosaic mode is available only on QuadroPlex"
 		self.mode = mode
 
@@ -1406,6 +1979,7 @@ class SLI(VizResource):
 		"""
 		"""
 		ret = "<%s>"%(SLI.rootNodeName)
+		ret += VizResource.serializeToXML(self, detailedConfig, addrOnly)
 
 		if self.hostName is not None:
 			ret = ret + "<hostname>%s</hostname>"%(self.hostName)
@@ -1437,6 +2011,9 @@ class SLI(VizResource):
 
 		if domNode.nodeName != SLI.rootNodeName:
 			raise ValueError, "Faild to deserialize SLI. Programmatic error."
+
+		# Deserialize the base class info
+		VizResource.deserializeFromXML(self, domNode)
 
 		hostnameNode = domutil.getChildNode(domNode, "hostname")
 		if hostnameNode is not None:
@@ -1488,6 +2065,9 @@ class Screen:
 		self.properties = {}
 		self.isXineramaScreen = False
 		self.gpuCombiner = None
+
+	def __str__(self):
+		return '<Screen %d>'%(self.screenNumber)
 
 	def __init__(self, screenNumber=None, server=None):
 		self.__clearAll()
@@ -1568,7 +2148,7 @@ class Screen:
 		else:
 			return self.server.getSchedulable()
 
-	def run(self, cmd, inFile=None, outFile=None, errFile=None, launcherEnv=None):
+	def run(self, args, inFile=None, outFile=None, errFile=None, launcherEnv=None):
 		if self.screenNumber is None:
 			raise VizError(VizError.INVALID_OPERATION, "Cannot run() on a screen which is not valid!")
 		if self.server is None:
@@ -1577,8 +2157,9 @@ class Screen:
 			raise VizError(VizError.INVALID_OPERATION, "The X server containing this screen is not schedulable. Cannot run command")
 		if not self.server.isCompletelyResolvable():
 			raise ValueError, "Incomplete X server passed %s"%(s.hashKey())
-			
-		return self.getSchedulable().run('/usr/bin/env DISPLAY=%s %s'%(self.getDISPLAY(), cmd), inFile, outFile, errFile, launcherEnv)
+		cmd_args = copy.copy(args)
+		cmd_args = ["/usr/bin/env", "DISPLAY=%s"%(self.getDISPLAY())]+cmd_args
+		return self.getSchedulable().run(cmd_args, inFile, outFile, errFile, launcherEnv)
 
 	def setGPU(self, gpu):
 		"""
@@ -1630,6 +2211,7 @@ class Screen:
 		if self.gpuCombiner is not None:
 			ret.append(deepcopy(self.gpuCombiner))
 		return ret
+
 	def setFBProperty(self, name, value):
 		"""
 		Set various frame buffer properties. 
@@ -1644,8 +2226,8 @@ class Screen:
 			# NOTE: 304x200 is the minimum size of the virtual framebuffer.
 			if (value[0]<304) or (value[0]>8192) or (value[1]<200) or (value[1]>8192):
 				raise ValueError, "Out of range values specified for resolution. The minimum supported is 304x200."
-			if (value[0]%8) != 0:
-				raise ValueError, "Width of the framebuffer must be a multiple of 8"
+			#if (value[0]%8) != 0:
+			#	raise ValueError, "Width (%d) of the framebuffer must be a multiple of 8"%(value[0])
 		elif name == "position":
 			if (len(value)!=2 or (type(value[0]) is not int)  or (type(value[1]) is not int)):
 				raise ValueError, "Invalid value for position. It must be a 2-tuple."
@@ -1690,6 +2272,18 @@ class Screen:
 				pass
 
 		return self.properties[name]
+
+	def setScreenNumber(self, screenNumber):
+		"""
+		Ser the X screen number corresponding to this screen.
+		"""
+		if (screenNumber is not None):
+			if (not isinstance(screenNumber, int)):
+				raise TypeError, "Screen Number must be an integer"
+			if (screenNumber < 0):
+				raise ValueError, "Screen number must be non-negative. You passed %d"%(screenNumber)
+
+		self.screenNumber = screenNumber
 
 	def getScreenNumber(self):
 		"""
@@ -1839,26 +2433,8 @@ class Server(VizResource):
 	Server class encapsulates a single X server
 	"""
 
-	rootNodeName = "serverconfig"
+	rootNodeName = "server"
 	all_x_extension_section_options = ['Composite']
-	def setUser(self, userInfo):
-		"""
-		Set the user who owns this Server.
-		"""
-		# Linux-only for now, so we check for UID
-		if userInfo is None:
-			raise TypeError, "Expecting User ID, got None"
-		if not isinstance(userInfo, int):
-			raise TypeError, "Expecting integer User ID, got %s"%(userInfo.__class__)
-		if userInfo<0:
-			raise TypeError, "User ID cannot be negative"
-		self.userInfo = userInfo
-	
-	def getUser(self):
-		"""
-		Get the user who has access to this Server.
-		"""
-		return self.userInfo
 	
 	def getSchedulable(self):
 		if not self.hasValidRuntimeConfig():
@@ -1873,10 +2449,18 @@ class Server(VizResource):
 		self.screens = {}
 		self.combineFBs = False
 		self.hostName = None
-		self.userInfo = None
-		self.resType = None
+		self.resType = NORMAL_SERVER
 		self.x_extension_section_option = {}
 		self.serverArgs = {}
+
+	def setConfig(self, srv):
+		self.modules = srv.modules
+		self.keyboard = srv.keyboard
+		self.mouse = srv.mouse
+		self.screens = srv.screens
+		self.combineFBs = srv.combineFBs
+		self.x_extension_section_option = srv.x_extension_section_option
+		self.serverArgs = srv.serverArgs
 
 	def setXExtensionSectionOption(self, optName, optVal):
 		"""
@@ -1941,6 +2525,7 @@ class Server(VizResource):
 		return True
 
 	def __init__(self, resIndex=None, hostName = None, serverType = NORMAL_SERVER):
+		VizResource.__init__(self)
 		self.resClass = "Server"
 		self.__clearAll()
 		if serverType not in VALID_SERVER_TYPES:
@@ -1949,6 +2534,16 @@ class Server(VizResource):
 		self.hostName = hostName
 		self.resType = serverType
 
+		self.clearConfig()
+
+	def clearConfig(self):
+		self.modules = []
+		self.keyboard = None
+		self.mouse = None
+		self.screens = {}
+		self.combineFBs = False
+		self.x_extension_section_option = {}
+		self.serverArgs = {}
 		# By default, we configure servers to disable the Composite extension.
 		# Applications which need this extension can enable this explicitly
 		self.setXExtensionSectionOption('Composite','Disable')
@@ -2008,6 +2603,13 @@ class Server(VizResource):
 		"""
 		return self.screens[screenNumber]
 
+	def run(self, args, inFile=None, outFile=None, errFile=None, launcherEnv=None):
+		if not self.screens.has_key(0):
+			raise VizError(VizError.BAD_CONFIGURATION, "No Screens on this X server. Cannot run anything on it!")
+
+		# Let screen number 0 do the running
+		return self.getScreen(0).run(args,inFile,outFile,errFile,launcherEnv)
+			
 	def getScreens(self):
 		"""
 		Return a list of all screens
@@ -2085,7 +2687,7 @@ class Server(VizResource):
 		if not moduleName in self.modules:
 			self.modules.append(moduleName)
 
-	def start(self, suppressOutput=True, suppressErrors=True):
+	def start(self, allocId=None, suppressOutput=True, suppressErrors=True):
 		"""
 		Start this X server
 		"""
@@ -2107,7 +2709,11 @@ class Server(VizResource):
 			errFile = open("/dev/null","w")
 		else:
 			errFile = None
-		return sched.run("/opt/vizstack/bin/vs-aew /opt/vizstack/bin/start-x-server :%d -logverbose 6"%(self.getIndex()), stdout=outFile, stderr=errFile)
+
+		cmd = ["/opt/vizstack/bin/start-x-server",":%d"%(self.getIndex()),"-logverbose", "6"]
+		if allocId is not None:
+			cmd = cmd + [" --allocId", "%d"%(allocId)]
+		return sched.run(cmd, outFile=outFile, errFile=errFile)
 
 	def stop(self):
 		"""
@@ -2117,16 +2723,19 @@ class Server(VizResource):
 			raise VizError(VizError.INCORRECT_VALUE, "%s is not a proper reference to a startable X server"%(str(self)))
 		if not self.hasValidRuntimeConfig():
 			raise VizError(VizError.BAD_CONFIGURATION, "%s cannot be started since it has not been configured properly"%(str(self)))
+		if self.isShared():
+			raise VizError(VizError.BAD_CONFIGURATION, "%s is a shared server. It cannot be stopped directly using this method."%(str(self)))
 	
 		sched = self.getSchedulable()
 		if sched is None:
 			raise VizError(VizError.RESOURCE_UNSPECIFIED, "Unable to get the scheduler details for this %s. Unable to start X server."%(str(self)))
 
 		# If we came all the way, then invoke the scheduler !
-		return sched.run("/opt/vizstack/bin/vs-Xkill :%d"%(self.getIndex()))
+		return sched.run(["/opt/vizstack/bin/vs-Xkill",":%d"%(self.getIndex())])
 
 	def serializeToXML(self, detailedConfig = True, addrOnly=False):
 		ret = "<%s>"%(Server.rootNodeName)
+		ret = ret + VizResource.serializeToXML(self, detailedConfig, addrOnly)
 		if self.hostName is not None: ret = ret + "<hostname>%s</hostname>"%(self.hostName)
 		if self.resIndex is not None: ret = ret + "<server_number>%d</server_number>"%(self.resIndex)
 
@@ -2134,7 +2743,6 @@ class Server(VizResource):
 			if self.resType is not None: ret = ret + "<server_type>%s</server_type>"%(self.resType)
 
 			if detailedConfig:
-				if self.userInfo is not None: ret = ret + "<owner>%d</owner>"%(self.userInfo)
 				for arg in self.serverArgs:
 					ret = ret + "<x_cmdline_arg>"
 					ret = ret + "<name>%s</name>"%(arg)
@@ -2166,6 +2774,8 @@ class Server(VizResource):
 		if domNode.nodeName != Server.rootNodeName:
 			raise ValueError, "Failed to deserialize Server. This should not happen. Node name=%s, expected %s!"%(domNode.nodeName, Server.rootNodeName)
 
+		VizResource.deserializeFromXML(self, domNode)
+
 		hostNameNode = domutil.getChildNode(domNode, "hostname")
 		if hostNameNode is not None:
 			self.hostName = domutil.getValue(hostNameNode)
@@ -2174,17 +2784,12 @@ class Server(VizResource):
 		if resIndexNode is not None:
 			self.resIndex = int(domutil.getValue(resIndexNode))
 
-		
 		resTypeNode = domutil.getChildNode(domNode, "server_type")
 		if resTypeNode is not None:
 			resType = domutil.getValue(resTypeNode)
 			if resType not in VALID_SERVER_TYPES:
 				raise ValueError, "Invalid server type '%s'"%(resType)
 			self.resType = resType
-
-		ownerNode = domutil.getChildNode(domNode, "owner")
-		if ownerNode is not None:
-			self.userInfo = int(domutil.getValue(ownerNode))
 
 		for cmdArgNode in domutil.getChildNodes(domNode, "x_cmdline_arg"):
 			argName = domutil.getValue(domutil.getChildNode(cmdArgNode,'name'))
@@ -2221,6 +2826,19 @@ class Server(VizResource):
 		if combineFBNode is not None:
 			self.combineFBs = bool(domutil.getValue(combineFBNode))
 
+	def getAllocationWeight(self):
+		"""
+		Returns a weight to be used by the allocation algorithm.
+		"""
+		wt = VizResource.getAllocationWeight(self)
+
+		if self.resIndex == 0:
+			# using a weight of 10000 protects nodes which are RGS capable!
+			# GPUs from those will naturally get selected at the end
+			wt += 10000
+
+		return wt
+
 class ResourceGroup(VizResourceAggregate):
 	"""
 	The ResourceGroup class. Provides a generalized way to setup and use a group of resources.
@@ -2236,7 +2854,35 @@ class ResourceGroup(VizResourceAggregate):
 		self.handler_params = None
 		self.resources = []
 		self.validateAgainst = None
+		self.description = None # A string which describes the resource group
 
+	def getDescription(self):
+		"""
+		Get the description of the resource group. This is a string
+		which gives info about the resource group to the users.
+		"""
+		if self.description is None:
+			return  ""
+		return self.description
+
+	def setDescription(self, desc):
+		"""
+		Set the description of the resource group. This is a string
+		which gives info about the resource group to the users.
+		"""
+		if not isinstance(desc, str):
+			raise TypeError, "Expected string"
+		self.description = desc
+	
+	def typeSearchMatch(self, otherRes):
+		if not VizResource.typeSearchMatch(self, otherRes):
+			return False
+
+		if (otherRes.name is not None) and (self.name != otherRes.name):
+			return False
+
+		return True
+		
 	def getName():
 		return self.name
 
@@ -2244,6 +2890,7 @@ class ResourceGroup(VizResourceAggregate):
 		"""
 		Constructor. Create a resource group, with specific parameters.
 		"""
+		VizResource.__init__(self)
 		if not isinstance(resources, list):
 			raise TypeError, "Expected list of resources. Got '%s'"%(resources.__class__)
 		self.__clearAll()
@@ -2253,34 +2900,6 @@ class ResourceGroup(VizResourceAggregate):
 		self.handler_params = handler_params
 		self.resources = resources
 		self.handlerObj = self.__createHandlerObj()
-
-	def searchMatch(self, otherRes):
-		"""
-		Method used to match two resources in a search context.
-		if otherRes has specified search items that aren't in us, then we fail.
-		Else we pass
-
-		This function is specialized for ResourceGroup to match the handler & name
-		"""
-		if not isinstance(otherRes, VizResource):
-			raise ValueError, "%s : You're trying to compare apples(%s) to trees(%s), my friend!"%(self.resClass, self, otherRes)
-
-		if otherRes.resClass != self.resClass:
-			return False
-
-		if otherRes.resType is not None:
-			if self.resType is None:
-				return False
-			if self.resType != otherRes.resType:
-				return False
-		
-		if otherRes.name is not None:
-			if self.name is None:
-				return False
-			if self.name != otherRes.name:
-				return False
-		
-		return True
 
 	def __createHandlerObj(self):
 		"""
@@ -2334,6 +2953,8 @@ class ResourceGroup(VizResourceAggregate):
 			ret += "<name>%s</name>"%(self.name)
 		if self.resType is not None:
 			ret += "<handler>%s</handler>"%(self.resType)
+		if self.description is not None:
+			ret += "<description>%s</description>"%(self.description)
 		if self.handler_params is not None:
 			ret += "<handler_params>%s</handler_params>"%(self.handler_params)
 		if len(self.resources)>0:
@@ -2367,6 +2988,10 @@ class ResourceGroup(VizResourceAggregate):
 			handler = domutil.getValue(handlerNode)
 			if len(handler)==0:
 				raise ValueError, "Resource Group handler should not be empty"
+
+		descNode = domutil.getChildNode(domNode, "description")
+		if descNode is not None:
+			self.description = domutil.getValue(descNode)
 
 		handlerParamsNode = domutil.getChildNode(domNode, "handler_params")
 		if handlerParamsNode is None:
@@ -2460,6 +3085,7 @@ class ResourceGroupHandler:
 
 class TiledDisplay(ResourceGroupHandler):
 	__validBlockTypes = ["gpu", "quadroplex"]
+	__validBezelModes = ["all", "disable", "desktop"]
 	def __init__(self, rgObj):
 		self.stereo_mode = None
 		self.num_blocks = None
@@ -2475,6 +3101,8 @@ class TiledDisplay(ResourceGroupHandler):
 		self.combine_displays = None # Enable OR disable Xinerama
 		self.group_blocks = None # For Xinerama per node
 		self.remap_display_outputs = None 
+		self.bezels = None
+		self.framelock = False # Disable framelock by default
 		self.rotate = None
 
 		self.matchedDD = None
@@ -2483,19 +3111,20 @@ class TiledDisplay(ResourceGroupHandler):
 		# let python parse the parameters for us !
 		paramsDict = {}
 		try:
-			params = map(lambda x:x.lstrip().rstrip(), self.params) # remove leading and trailing newlines
+			# split to lines & remove leading and trailing newlines
+			params = map(lambda x:x.lstrip().rstrip(), self.params.split('\n'))
 			allParams = ""
 			for line in params:
 				hashPos=line.find('#') # remove comments, this also means that a hash can't come inside a string.
 				if hashPos!=-1:
 					line = line[:hashPos-1]
-				allParams += line
+				allParams += (line+'\n')
 			if allParams.find("(")!=-1:
 				raise ValueError, "Function call bracket is not allowed in the parameter specification for security reasons."
 			exec(allParams, paramsDict)
 		except Exception, e:
 			raise ValueError, "Bad Syntax in parameter specification for Tiled Display.\nParams='%s'.\nError : %s"%(self.params, str(e))
-
+		#pprint(paramsDict)
 		if paramsDict.has_key('num_blocks'): self.num_blocks = paramsDict['num_blocks']
 		if paramsDict.has_key('block_display_layout'): self.block_display_layout = paramsDict['block_display_layout']
 		if paramsDict.has_key('block_type'): self.block_type = paramsDict['block_type']
@@ -2514,6 +3143,12 @@ class TiledDisplay(ResourceGroupHandler):
 				self.group_blocks = self.num_blocks
 		if paramsDict.has_key('remap_display_outputs'): self.remap_display_outputs = paramsDict['remap_display_outputs']
 		if paramsDict.has_key('rotate'): self.rotate = paramsDict['rotate']
+		if paramsDict.has_key('bezels'): self.bezels = paramsDict['bezels']
+		if (self.bezels is not None) and (self.bezels not in TiledDisplay.__validBezelModes):
+			raise ValueError, "Bad value for Bezel Mode(%s). Valid values are None, 'all', 'disable' and 'desktop'"%(self.bezels)
+		if paramsDict.has_key('framelock'): self.framelock = paramsDict['framelock']
+		if self.framelock not in [True, False]:
+			raise ValueError, "Bad value for framelock(%s). Must be one of True/False"%(self.framelock)
 
 	def getParam(self, paramName):
 		if paramName == 'num_blocks':
@@ -2538,6 +3173,10 @@ class TiledDisplay(ResourceGroupHandler):
 			return self.rotate
 		elif paramName == 'stereo_mode':
 			return self.stereo_mode
+		elif paramName == 'bezels':
+			return self.bezels
+		elif paramName == 'framelock':
+			return self.framelock
 		else:
 			raise ValueError, "Unknown parameter '%s'"%(paramName)
 
@@ -2564,6 +3203,10 @@ class TiledDisplay(ResourceGroupHandler):
 			self.rotate = paramValue
 		elif paramName == 'stereo_mode':
 			self.stereo_mode = paramValue
+		elif paramName == 'bezels':
+			self.bezels = paramValue
+		elif paramName == 'framelock':
+			self.bezels = paramValue
 		else:
 			raise ValueError, "Unknown parameter '%s'"%(paramName)
 
@@ -2657,8 +3300,8 @@ class TiledDisplay(ResourceGroupHandler):
 			for po in self.remap_display_outputs:
 				if not isinstance(po, int):
 					raise ValueError, "Expect int for port number, got '%s'"(po)
-				if (po<0) or (po>=3): # FIXME: NVIDIA specific check for max 3 scanouts!
-					raise ValueError, "Invalid port number. Valid range is from 0 to 2. You passed:%d"%(po)
+				if (po<0):
+					raise ValueError, "Port number can't be negative. You passed:%d"%(po)
 				repeatUsage[po]=None
 			if len(repeatUsage) != len(self.remap_display_outputs):
 				raise ValueError, "One or more port numbers specified more than once."
@@ -2674,7 +3317,7 @@ class TiledDisplay(ResourceGroupHandler):
 			server = extractObjects(Server, innerRes)
 			if len(server)!=1:
 				raise ValueError, "Each reslist must have exactly one X server"
-			if server[0].getType() not in [None, "normal"]:
+			if server[0].getType() not in [None, NORMAL_SERVER]:
 				raise ValueError, "Each reslist must have one normal X server"
 			kbd = extractObjects(Keyboard, innerRes)
 			if len(kbd)>1:
@@ -2777,11 +3420,8 @@ class TiledDisplay(ResourceGroupHandler):
 	
 		# validate & find any needed mode and devices	
 		self.doValidate(self.validateAgainst)
-
-		if self.tile_resolution is None:
-			tile_resolution = [self.matchedMode['width'], self.matchedMode['height']]
-		else:
-			tile_resolution = self.tile_resolution
+		usedMode = copy.deepcopy(self.matchedMode)
+		tile_resolution = [self.matchedMode['width'], self.matchedMode['height']]
 
 		display_mode = self.matchedMode['alias']
 			
@@ -2789,6 +3429,28 @@ class TiledDisplay(ResourceGroupHandler):
 		fbWidth = tile_resolution[0]*self.block_display_layout[0]
 		fbHeight = tile_resolution[1]*self.block_display_layout[1]
 
+		blockDesc = { 
+			'screen' : None, # The framebuffer to use for drawing to this block
+			'rect_area' : None,# Coordinates, (x1,y1,x2,y2). rectangular => (0,0) is the origin and corresponds to top left. All values in pixels. 
+			'gl_area' : None,# # Coordinates, (x1,y1,x2,y1). x1, x2 vary from 0 to 1, and so do x2, y2. Y increases from top to bottom, GL style
+			'gpus' : [],
+			'server' : None, # which server controls this block
+			'posInServer' : None, # col, row position of the GPU in the server - for the purpose of group_blocks!
+			'sli' : [], # SLI object for QuadroPlex
+		}
+
+		# create a block layout with which to populate all the blocks
+		blockLayout = []
+		blockLayoutRow = []
+		for i in range(self.num_blocks[0]):
+			blockLayoutRow.append(copy.deepcopy(blockDesc))
+		for i in range(self.num_blocks[1]):
+			blockLayout.append(copy.deepcopy(blockLayoutRow))
+
+		rotateNormal = (self.rotate not in ['portrait', 'inverted_portrait'])
+				
+		# populate the blocks with the servers, gpus, kbd and mouse
+		blockIndex = 0
 		for innerRes in resources:
 			server = extractObjects(Server, innerRes)[0] # Take the first X server
 			kbd = extractObjects(Keyboard, innerRes)
@@ -2799,226 +3461,408 @@ class TiledDisplay(ResourceGroupHandler):
 				server.setMouse(mouse[0])
 			# len(servers) can't be > 0 as we check for it earlier
 			gpu_list = extractObjects(GPU, innerRes)
-			screenNumber = 0
-			# Create one screen per GPU for this X server. Having multiple GPUs
-			# per screen is a better (as in "more stable and quicker") way of doing things
-			screensOnThisGPU = []
-			screenPosX = 0
-			screenPosY = 0
-			gpuIndex = -1
-			if self.remap_display_outputs is not None:
-				map_do = self.remap_display_outputs
-			else:
-				if self.stereo_mode != "passive":
-					map_do = range(self.block_display_layout[0]*self.block_display_layout[1])
-				else:
-					map_do = range(2)
+			# Reset all scanouts - we will define them next ourselves.
+			for gpu in gpu_list:
+				gpu.clearScanouts()
+
 			if self.block_type == "gpu":
-				# Setup All GPUs in this X server	
+				gpuIndex = 0
+				screenNumber = 0
 				for gpu in gpu_list:
-					gpuIndex += 1
-					screen = Screen(screenNumber)
+					colInBlock = blockIndex % self.num_blocks[0]
+					rowInBlock = blockIndex / self.num_blocks[0]
+					bl = blockLayout[rowInBlock][colInBlock]
+					bl['server'] = server
+					bl['screen'] = Screen(screenNumber)
+					bl['gpus'] = [gpu]
 					if self.group_blocks is not None:
-						col = gpuIndex % self.group_blocks[0]
-						row = (gpuIndex - col) / self.group_blocks[0]
-						if self.rotate in ['portrait', 'inverted_portrait']:
-							# need to swap width & height if we're rotated by any
-							# multiple of 90 degrees.
-							screenPosX = fbHeight * col
-							screenPosY = fbWidth * row
-						else:
-							screenPosX = fbWidth * col
-							screenPosY = fbHeight * row
-						screen.setFBProperty('position', [screenPosX, screenPosY])
+						colInServer = gpuIndex % self.group_blocks[0]
+						rowInServer = (gpuIndex-colInServer) / self.group_blocks[0]
+					else:
+						colInServer = 0
+						rowInServer = 0
+					bl['posInServer'] = [colInServer, rowInServer]
 
-					# Increment for next iteration
+					# increment for next iteration
 					screenNumber += 1
-					screen.setFBProperty('resolution', [fbWidth, fbHeight])
+					gpuIndex += 1
+					blockIndex += 1
+			else:
+				colInBlock = blockIndex % self.num_blocks[0]
+				rowInBlock = blockIndex / self.num_blocks[0]
+				bl = blockLayout[rowInBlock][colInBlock]
 
-					# Setup rotation
-					if self.rotate is not None:
-						screen.setFBProperty('rotate', self.rotate)
+				bl['server'] = server
+				bl['posInServer'] = [0, 0]
+				bl['screen'] = Screen(0)
+				bl['gpus'] = gpu_list
+				bl['sli'] = extractObjects(SLI, innerRes)[0]
 
-					# there is atleast one scanout
-					gpu.setScanout(
-						port_index = map_do[0], 
-						display_device = self.display_device,
-						mode = display_mode,
-						outputX = 0,
-						outputY = 0)
 
-					# if the layout has more than one port, then we need to add 
-					# at-least a second scanout
-					if (self.block_display_layout[0]>1) or (self.block_display_layout[1]>1):
-						gpu.setScanout(
-							port_index = map_do[1], 
-							display_device = self.display_device,
-							mode = display_mode,
-							outputX = tile_resolution[0]*(self.block_display_layout[0]-1),
-							outputY = tile_resolution[1]*(self.block_display_layout[1]-1))
-					# Handle stereo
-					if self.stereo_mode is not None:
-						screen.setFBProperty('stereo', self.stereo_mode)
+		# Compute a mapping of display outputs
+		if self.remap_display_outputs is not None:
+			map_do = self.remap_display_outputs
+		else:
+			if self.stereo_mode != "passive":
+				map_do = range(self.block_display_layout[0]*self.block_display_layout[1])
+			else:
+				map_do = range(2) # FIXME: Hardcoded to 2, since that's the max scanouts a single GPU can drive at once!
 
-					# Passive stereo needs a second scanout as well, and at the same location as
-					# the first one.
+		isSingleOutputBlock = ((self.block_display_layout[0]*self.block_display_layout[1])==1)
+
+		# Force all bezels if needed. This is the default, since most applications cannot
+		# handle irregular bezels!
+		if self.bezels in [None, 'all']:
+			forceBezel = True
+		else:
+			forceBezel = False
+
+		# Clear bezels if asked to
+		if self.bezels == 'disable':
+			for side in ['left','right','bottom','top']:
+				usedMode['bezel'][side] = 0
+
+		#print 
+		#print 
+		#forceBezel = True
+		#print 'forceBezel = ',forceBezel
+		#print 'num_blocks = ',self.num_blocks
+		#print 'block_display_layout = ',self.block_display_layout
+
+		if self.rotate=='portrait':
+			leftEdge = 'top'
+			rightEdge = 'bottom'
+			topEdge = 'right'
+			bottomEdge = 'left'
+		elif self.rotate=='inverted_portrait':
+			leftEdge = 'bottom'
+			rightEdge = 'top'
+			topEdge = 'left'
+			bottomEdge = 'right'
+		elif self.rotate=='inverted_landscape':
+			leftEdge = 'right'
+			rightEdge = 'left'
+			topEdge = 'bottom'
+			bottomEdge = 'top'
+		else:
+			# Normal
+			leftEdge = 'left'
+			rightEdge = 'right'
+			topEdge = 'top'
+			bottomEdge = 'bottom'
+
+		# Now, walk the blockLayout matrix 
+		# Populate the screens with the GPUs
+		# and compute coordinates
+		curY = 0
+		lastRow = self.num_blocks[1]-1
+		lastCol = self.num_blocks[0]-1
+		for row in range(self.num_blocks[1]):
+			curX = 0 
+			for col in range(self.num_blocks[0]):
+				bl = blockLayout[row][col]
+				if self.block_type=="gpu":
+					gpu = bl['gpus'][0]
+
+					fbHeight = 0
+					lastSubRow = self.block_display_layout[1]-1
+					lastSubCol = self.block_display_layout[0]-1
+
+					fbHeight = 0
+					originY = 0
+					oY = []
+
+					fbWidth = 0
+					originX = 0	
+					oX = []
+
+					# landscape(normal) or inverted_landscape
+					if topEdge in ['top','bottom']:
+						for subRow in range(lastSubRow+1):
+							originY = fbHeight
+							# Unrotated tiled display; 
+							# Bezels on top and bottom only if not on the respective edge
+							includeBezel = []
+							if (not ((row==0) and (subRow==0))) or forceBezel:
+								#print 'Including Top Bezel'
+								includeBezel.append(topEdge)
+							if (not ((row==lastRow) and (subRow==lastSubRow))) or forceBezel:
+								#print 'Including Bottom Bezel'
+								includeBezel.append(bottomEdge)
+
+							for bezel in includeBezel:
+								if bezel=='top':
+									fbHeight += usedMode['bezel']['top']
+									originY += usedMode['bezel']['top']
+								if bezel=='bottom':
+									fbHeight += usedMode['bezel']['bottom']
+
+							oY.append(originY)
+							#print 'added %d to oY'%(originY)
+							fbHeight += tile_resolution[1]
+
+						for subCol in range(lastSubCol+1):
+							originX = fbWidth
+							# Unrotated tiled display; 
+							# Bezels on left and right only if not on the respective edge
+							includeBezel = []
+							if (not ((col==0) and (subCol==0))) or forceBezel: # left bezel only if not the first
+								includeBezel.append(leftEdge)
+							if (not ((col==lastCol) and (subCol==lastSubCol))) or forceBezel:
+								includeBezel.append(rightEdge)
+							for bezel in includeBezel:
+								if bezel=='left':
+									#print 'Including Left Bezel'
+									fbWidth += usedMode['bezel']['left']
+									originX += usedMode['bezel']['left']
+								if bezel=='right':
+									#print 'Including Right Bezel'
+									fbWidth += usedMode['bezel']['right']
+							oX.append(originX)
+							#print 'added %d to oX'%(originX)
+							fbWidth += tile_resolution[0]
+					else:
+						# portrait or inverted_portrait
+
+						for subRow in range(lastSubCol+1):
+							originX = fbWidth
+							includeBezel = []
+							if (not ((row==0) and (subRow==0))) or forceBezel:
+								includeBezel.append(topEdge)
+
+							if (not ((row==lastRow) and (subRow==lastSubRow))) or forceBezel:
+								includeBezel.append(bottomEdge)
+
+							for bezel in includeBezel:
+								if bezel=='left':
+									fbWidth += usedMode['bezel']['left']
+									originX += usedMode['bezel']['left']
+								if bezel=='right':
+									fbWidth += usedMode['bezel']['right']
+
+							oX.append(originX)
+							fbWidth += tile_resolution[0]
+
+						for subCol in range(lastSubRow+1):
+							originY = fbHeight
+							includeBezel = []
+							if (not ((col==0) and (subCol==0))) or forceBezel: # left bezel only if not the first
+								includeBezel.append(leftEdge)
+							if (not ((col==lastCol) and (subCol==lastSubCol))) or forceBezel:
+								includeBezel.append(rightEdge)
+
+							for bezel in includeBezel:
+								if bezel=='top':
+									fbHeight += usedMode['bezel']['top']
+									originY += usedMode['bezel']['top']
+								if bezel=='bottom':
+									fbHeight += usedMode['bezel']['bottom']
+							oY.append(originY)
+							fbHeight += tile_resolution[1]
+
+
+					#print 'oX = ',
+					#pprint(oX)
+					#print 'oY = ',
+					#pprint(oY)
+					scanoutIndex = 0
+					for subRow in range(lastSubRow+1):
+						for subCol in range(lastSubCol+1):
+							# Create the scanout needed
+							gpu.setScanout(
+								port_index = map_do[scanoutIndex], 
+								display_device = self.display_device,
+								mode = display_mode,
+								outputX = oX[subCol],
+								outputY = oY[subRow])
+							scanoutIndex += 1
+
+					# Passive stereo needs a second scanout as well
 					if self.stereo_mode == "passive":
 						gpu.setScanout(
 							port_index = map_do[1], 
 							display_device = self.display_device,
 							mode = display_mode,
-							outputX = 0,
-							outputY = 0)
+							outputX = originX,
+							outputY = originY)
+					#pprint(gpu.getScanouts())
+				else: # quadroplex block
+					# we have two GPUs here
+					# Setup SLI mosaic
+					sli = extractObjects(SLI, innerRes)[0]
+					sli.setMode("mosaic")
+					bl['screen'].setGPUCombiner(sli)
 
-					screen.setGPU(gpu)
-					server.addScreen(screen)
-					screensOnThisGPU.append(screen)
-			else: # quadroplex
-				screen = Screen(0)
-				screen.setFBProperty('resolution', [fbWidth, fbHeight])
+					fbHeight = 0
+					# Compute each framebuffer 
+					si = -1
+					numScanouts = self.block_display_layout[0] * self.block_display_layout[1]
+					for qpRow in range(self.block_display_layout[1]):
+						originY = fbHeight
+						fbHeight += tile_resolution[1]
+						if ((row>0) or (qpRow>0)) or forceBezel: # first row
+							fbHeight += usedMode['bezel']['top']
+							originY += usedMode['bezel']['top']
+						if ((row<(self.num_blocks[1]-1)) or (qpRow<(self.block_display_layout[1]-1))) or forceBezel: # not last row
+							fbHeight += usedMode['bezel']['bottom']
+					
+						fbWidth = 0
+						for qpCol in range(self.block_display_layout[0]):
+							si += 1
+							originX = fbWidth
+							fbWidth += tile_resolution[0]
+							if ((col>0) or (qpCol>0)) or forceBezel: # first col
+								fbWidth += usedMode['bezel']['left']
+								originX += usedMode['bezel']['left']
+							if ((col<(self.num_blocks[0]-1)) or (qpCol<(self.block_display_layout[0]-1))) or forceBezel: # not last col ?
+								fbWidth += usedMode['bezel']['right']
+							# determine GPU index and Port Index	
+							if (numScanouts == 2):
+								gi = si
+								pi = 0
+							else:
+								pi = si%2
+								gi = si/2
+							# and set the scanout
+							bl['gpus'][gi].setScanout(
+								port_index = map_do[pi],
+								display_device = self.display_device,
+								mode = display_mode,
+								outputX = originX,
+								outputY = originY)
 
+				# end processing for this block
+				bl['screen'].setFBProperty('resolution', [fbWidth, fbHeight])
+				#pprint(bl['screen'].getFBProperty('resolution'))
+				bl['screen'].setGPUs(bl['gpus'])
+				if rotateNormal:
+					bl['rect_area'] = [curX, curY, curX + fbWidth, curY+fbHeight]
+				else:
+					bl['rect_area'] = [curX, curY, curX + fbHeight, curY+fbWidth]
+				if rotateNormal:
+					curX += fbWidth
+				else:
+					curX += fbHeight
+			# End processing for a single row by incrementing our Y
+			if rotateNormal:
+				curY += fbHeight # height will be constant if not rotated, so we can do this
+			else:
+				curY += fbWidth # width will be constant if not rotated, so we can do this
+
+		# Make another pass in terms of blocks(as in 'X server')
+		if self.group_blocks is not None:
+			numRowsPerServer = self.num_blocks[1]/self.group_blocks[1]
+			numColsPerServer = self.num_blocks[0]/self.group_blocks[0]
+			for serverRow in range(numRowsPerServer):
+				for serverCol in range(numColsPerServer):
+					originCol = serverCol*self.group_blocks[0]
+					originRow = serverRow*self.group_blocks[1]
+					bl = blockLayout[originRow][originCol]
+					originArea = bl['rect_area']
+					for subRow in range(self.group_blocks[1]):
+						for subCol in range(self.group_blocks[0]):
+							screen = blockLayout[originRow+subRow][originCol+subCol]['screen']
+							subArea = blockLayout[originRow+subRow][originCol+subCol]['rect_area']
+							screen.setFBProperty('position', [ subArea[0]-originArea[0], subArea[1]-originArea[1] ])
+							#pprint(screen.getFBProperty('resolution'))
+
+		# Last steps
+		for row in range(self.num_blocks[1]):
+			for col in range(self.num_blocks[0]):
+				screen = blockLayout[row][col]['screen']
+				server = blockLayout[row][col]['server']
+				# Handle stereo
+				if self.stereo_mode is not None:
+					screen.setFBProperty('stereo', self.stereo_mode)
 				# Setup rotation & stereo
 				if self.rotate is not None:
 					screen.setFBProperty('rotate', self.rotate)
-				if self.stereo_mode is not None:
-					screen.setFBProperty('stereo', self.stereo_mode)
 
-				gpu0 = gpu_list[0]
-				gpu1 = gpu_list[1]
-				sli = extractObjects(SLI, innerRes)[0]
-				sli.setMode("mosaic")
-				screen.setGPUCombiner(sli)
-				# Setup outputs as needed
-				numDisplays = self.block_display_layout[0]*self.block_display_layout[1]
-				gpu0.setScanout(
-					port_index = map_do[0], 
-					display_device = self.display_device,
-					mode = display_mode,
-					outputX = 0,
-					outputY = 0)
-
-				if ((self.block_display_layout[0]==1) or (self.block_display_layout[1]==1)): #1x2, 1x3, 1x4 or inverses
-					if self.block_display_layout[1]==1:
-						isHoriz = 1
-						isVert = 0
-					else:
-						isHoriz = 0
-						isVert = 1
-					if numDisplays == 2:
-						# We map 1x2 to 1 output per GPU, as given on the nvidia website
-						gpu1.setScanout(
-							port_index = map_do[0],
-							display_device = self.display_device,
-							mode = display_mode,
-							outputX = tile_resolution[0]*isHoriz,
-							outputY = tile_resolution[1]*isVert)
-					else: # 1x3, 1x4 and inverses
-						# First two outputs goto the first GPU, rest to the next one
-						gpu0.setScanout(
-							port_index = map_do[1], 
-							display_device = self.display_device,
-							mode = display_mode,
-							outputX = tile_resolution[0]*isHoriz,
-							outputY = tile_resolution[1]*isVert)
-						gpu1.setScanout(
-							port_index = map_do[0], 
-							display_device = self.display_device,
-							mode = display_mode,
-							outputX = tile_resolution[0]*isHoriz*2,
-							outputY = tile_resolution[1]*isVert*2)
-						if numDisplays==4:
-							gpu1.setScanout(
-								port_index = map_do[1], 
-								display_device = self.display_device,
-								mode = display_mode,
-								outputX = tile_resolution[0]*isHoriz*3,
-								outputY = tile_resolution[1]*isVert*3)
-				elif numDisplays == 4: # 2x2
-					gpu0.setScanout(
-						port_index = map_do[1], 
-						display_device = self.display_device,
-						mode = display_mode,
-						outputX = tile_resolution[0],
-						outputY = 0)
-					gpu1.setScanout(
-						port_index = map_do[0], 
-						display_device = self.display_device,
-						mode = display_mode,
-						outputX = 0,
-						outputY = tile_resolution[1])
-					gpu1.setScanout(
-						port_index = map_do[1], 
-						display_device = self.display_device,
-						mode = display_mode,
-						outputX = tile_resolution[0],
-						outputY = tile_resolution[1])
-
-				# Add it all in
-				screen.setGPUs([gpu0, gpu1])
 				server.addScreen(screen)
-				screensOnThisGPU.append(screen)
-				
-			# Handle Xinerama
-			# If xinerama is not enabled, then we add all the screens
-			# else, we add a single xinerama screen. Note that we don't
-			# allow xinerama with nodewise irregular configs. i.e. we
-			# won't allow one GPU on one node, two GPUs on another node,
-			# three on another _if_ Xinerama is enabled. This check is enforced
-			# in doValidate()
-			if self.combine_displays:
-				server.combineScreens(True)
-				Xscreens.append(server.getCombinedScreen())
-			else:
-				Xscreens = Xscreens + screensOnThisGPU
+				# Enforce Xinerama
+				if self.combine_displays:
+					server.combineScreens(True)
 
-			# Add this server to our list
-			Xservers.append(server)
+		self.actualLayoutMatrix = blockLayout
 
-		# Now, create the layout matrix
-		if self.combine_displays == True:
-			# Xinerama case - number of rows & cols may get crunched ...
-			num_cols = self.num_blocks[0] / self.group_blocks[0]
-			num_rows = self.num_blocks[1] / self.group_blocks[1]
+		if self.combine_displays:
+			numRowsPerServer = self.num_blocks[1]/self.group_blocks[1]
+			numColsPerServer = self.num_blocks[0]/self.group_blocks[0]
+			blockLayoutXinerama = []
+			blockLayoutRow = []
+			for i in range(numColsPerServer):
+				blockLayoutRow.append(copy.deepcopy(blockDesc))
+			for i in range(numRowsPerServer):
+				blockLayoutXinerama.append(copy.deepcopy(blockLayoutRow))
+
+			for serverRow in range(numRowsPerServer):
+				for serverCol in range(numColsPerServer):
+					originCol = serverCol*self.group_blocks[0]
+					originRow = serverRow*self.group_blocks[1]
+					bl = blockLayout[originRow][originCol]
+					blx = blockLayoutXinerama[serverRow][serverCol]
+					blx['screen']=bl['server'].getCombinedScreen()
+					blx['server']=bl['server']
+					blx['gpus']=[]
+					blx['sli']=[]
+					# compute a bounding box - couldn't this be computed using the combined screen
+					maxX = 0
+					maxY = 0
+					minX = 10000000
+					minY = 10000000
+					for subRow in range(self.group_blocks[1]):
+						for subCol in range(self.group_blocks[0]):
+							screen = blockLayout[originRow+subRow][originCol+subCol]['screen']
+							subArea = blockLayout[originRow+subRow][originCol+subCol]['rect_area']
+							x1 = subArea[0]
+							y1 = subArea[1]
+							x2 = subArea[2]
+							y2 = subArea[3]
+							maxX = max(x1,x2,maxX)
+							maxY = max(y1,y2,maxY)
+							minX = min(x1,x2,minX)
+							minY = min(y1,y2,minY)
+							blx['gpus'] += blockLayout[originRow+subRow][originCol+subCol]['gpus']
+							blx['sli'] += blockLayout[originRow+subRow][originCol+subCol]['sli']
+					blx['rect_area']=[minX, minY, maxX, maxY]
+			self.effectiveLayoutMatrix = blockLayoutXinerama
+			computeGLAreaFor = [self.actualLayoutMatrix, self.effectiveLayoutMatrix]
 		else:
-			# Non-xinerama case, number of rows and cols will remain the
-			# same. This will change with "separate_screens" gets introduced
-			num_cols = self.num_blocks[0]
-			num_rows = self.num_blocks[1]
+			# retain the layout matrix
+			self.effectiveLayoutMatrix = blockLayout
+			computeGLAreaFor = [self.actualLayoutMatrix]
 
-		self.layoutMatrix = []
-		for i in range(num_rows):
-			newEmptyRow = [None]*(num_cols) # NOTE: we use a 1 Screen per GPU approach, irrespective of the number of tiles it drives
-			self.layoutMatrix.append(newEmptyRow)
+		for layout in computeGLAreaFor:
+			# Compute the gl_area values
+			lastBlock = layout[-1][-1]
+			maxRectX = lastBlock['rect_area'][2]
+			maxRectY = lastBlock['rect_area'][3]
+			for row in range(len(layout)):
+				for col in range(len(layout[0])):
+					bl = layout[row][col]
+					x1 = bl['rect_area'][0]/float(maxRectX)
+					y1 = 1.0-bl['rect_area'][1]/float(maxRectY)
+					x2 = bl['rect_area'][2]/float(maxRectX)
+					y2 = 1.0-bl['rect_area'][3]/float(maxRectY)
+					bl['gl_area'] = [x1,y2,x2,y1]
 
-		if (self.combine_displays == True) or (self.group_blocks is None):
-			# In this case, we can directly address the displays!
-			for row in range(num_rows):
-				for col in range(num_cols):
-					screenIndex = (row*num_cols)+col
-					self.layoutMatrix[row][col] = Xscreens[(row*num_cols)+col]
-		else:
-			# In this case, we have to map to the final row & col
-			# since it's a different kind of correspondence
-			nscols = num_cols/self.group_blocks[0] # Number of server cols
-			nsrows = num_rows/self.group_blocks[1] # Number of server rows
-			num_screens_per_server = self.group_blocks[0]*self.group_blocks[1] # same as no of GPUs in the block
+		#pprint(self.layoutMatrix)
 
-			for screenIndex in range(len(Xscreens)):
-				srvIndex = screenIndex/num_screens_per_server
-				srvRow = srvIndex / nscols
-				srvCol = srvIndex % nscols
+	def getActualLayoutMatrix(self):
+		"""
+		Get the "actual" layout matrix. This reflects the way in which the tiled
+		display is laid out, without accounting for xinerama (if any)
+		"""
+		return self.actualLayoutMatrix
 
-				scrIndex = screenIndex % num_screens_per_server
-				subRow = scrIndex / self.group_blocks[0]
-				subCol = scrIndex % (self.group_blocks[0])
-
-				self.layoutMatrix[srvRow+subRow][srvCol+subCol] = Xscreens[screenIndex]
-				
 	def getLayoutMatrix(self):
-		return self.layoutMatrix
+		"""
+		Get the effective layout matrix. If xinerama is in use, you get t
+		"""
+		return self.effectiveLayoutMatrix
 
 	def getLayoutDimensions(self):
-		return [len(self.layoutMatrix[0]), len(self.layoutMatrix)]
+		return [len(self.effectiveLayoutMatrix[0]), len(self.effectiveLayoutMatrix)]
 
 		
 def deserializeVizResource(domNode, classList=[GPU, SLI, Server, Keyboard, Mouse]):
@@ -3034,6 +3878,16 @@ def deserializeVizResource(domNode, classList=[GPU, SLI, Server, Keyboard, Mouse
 				return newObject
 	raise ValueError, "Could not deserialize VizResource : Unrecognized object '%s'"%(domNode.nodeName)
 
+
+def findMatchingObjects(classTemplate, searchOb, objectList):
+	if not isinstance(objectList, list):
+		objectList = [ objectList ]
+	obList = extractObjects(classTemplate, objectList)
+	retList = []
+	for ob in obList:
+		if ob.typeSearchMatch(searchOb):
+			retList.append(ob)
+	return retList
 
 def extractObjects(classTemplate, objectList):
 	"""
@@ -3103,6 +3957,10 @@ class Allocation:
 
 			allServers += extractObjects(Server, realRes)
 
+		allSharedGPUs = extractObjects(GPU, self.resources)
+		allSharedGPUs = filter(lambda x:x.isShared(), allSharedGPUs)
+		allServers += map(lambda x:x.getSharedServer(), allSharedGPUs)
+
 		return allServers
 
 	def setupViz(self, resourceAccess):
@@ -3148,14 +4006,20 @@ class Allocation:
 		serversToStart = filter(lambda x: x.hasValidRuntimeConfig(), serverList)
 
 		if len(serversToStart)<len(serverList):
-			print 'WARNING: %d servers were not setup with a valid runtime configuration. Skipping them'%(len(serverList)-len(serversToStart))
+			# Commenting out this warning - since it interferes with GUIs 
+			#print 'WARNING: %d servers were not setup with a valid runtime configuration. Skipping them'%(len(serverList)-len(serversToStart))
+			pass
 
 		if len(serversToStart)==0:
 			raise VizError(VizError.BAD_CONFIGURATION, "There are no servers with a valid configuration to start")
 
 		# Start the X servers !
 		for srv in serversToStart:
-			self.xprocs.append(srv.start(suppressOutput=suppressMessages, suppressErrors=suppressMessages))
+			if srv.isShared():
+				p = srv.start(self.id, suppressOutput=suppressMessages, suppressErrors=suppressMessages)
+			else:
+				p = srv.start(suppressOutput=suppressMessages, suppressErrors=suppressMessages)
+			self.xprocs.append(p)
 
 		# Wait for them to start
 		try:
@@ -3442,12 +4306,15 @@ class ResourceAccess:
 
 		return self.__decodeAllocation(dom)
 	
-	def allocate(self, reqResList, chooseNodeList=[]):
+	def allocate(self, reqResList, chooseNodeList=[], appName=None):
 		"""
 		allocate(reqResList, chooseNodeList)
 		
 		Allocate resources. reqResList is a list of resource requirements, with each element being a required
 		resource.
+
+		An appName can be given to an allocation. This can help users identify an allocation more
+		naturally.
 
 		Resources are chosen from chooseNodeList. If chooseNodeList is empty, then all nodes are 
 		candidates.
@@ -3465,6 +4332,12 @@ class ResourceAccess:
 		Each element of this list corresponds to the requirement in the same position in the reqResList.
 		On failure, a VizError exception is thrown.
 		"""
+		if appName is None:
+			appName = sys.argv[0]
+			# remove any path prefix
+			exeName = appName.rfind('/')
+			if exeName != -1:
+				appName = appName[exeName+1:]
 		if self.sock is None:
 			raise VizError(VizError.NOT_CONNECTED, "Not connected to SSM")
 
@@ -3478,6 +4351,8 @@ class ResourceAccess:
 				nodeSpec += "<search_node>%s</search_node>"%(nodeName)
 
 		message = """<ssm><allocate>"""
+		if appName is not None:
+			message += "<appName>%s</appName>"%(appName)
 		for req in reqResList:
 			message = message+ "<resdesc>"
 			if type(req) is list:
@@ -3518,7 +4393,7 @@ class ResourceAccess:
 			valueNode = domutil.getChildNode(resNode, "value")
 			allValueChildren = domutil.getAllChildNodes(valueNode)
 			if len(allValueChildren)!=1:
-				raise VizError(VizError.INTERNAL_ERROR, "Incorrect return XML from the SSM")
+				raise VizError(VizError.INTERNAL_ERROR, "Incorrect return XML from the SSM in decodeAllocation")
 			
 			vc = allValueChildren[0]
 			if vc.nodeName == "list":
@@ -3529,7 +4404,7 @@ class ResourceAccess:
 					# XML
 					decodedObj = deserializeVizResource(node, [GPU, SLI, Server, Keyboard, Mouse, ResourceGroup, VizNode])
 					if isinstance(decodedObj, VizResourceAggregate):
-						raise VizError(VizError.INTERNAL_ERROR, "Incorrect return XML from the SSM")
+						raise VizError(VizError.INTERNAL_ERROR, "Incorrect return XML from the SSM in decodeAllocation")
 					innerRes.append(decodedObj)
 			else:
 				decodedObj = deserializeVizResource(vc, [GPU, Server, SLI, Keyboard, Mouse, ResourceGroup, VizNode])
@@ -3581,11 +4456,12 @@ class ResourceAccess:
 		for allocNode in rvNode.childNodes:
 			if allocNode.nodeType != allocNode.ELEMENT_NODE:
 				continue
-
 			if allocNode.nodeName == "allocation":
 				allocIdNode = domutil.getChildNode(allocNode, "allocId")
 				userNameNode = domutil.getChildNode(allocNode, "userName")
 				resourceNode = domutil.getChildNode(allocNode, "resources")
+				startTimeNode = domutil.getChildNode(allocNode, "startTime")
+				appNameNode = domutil.getChildNode(allocNode, "appName")
 				resourceList = []
 				for resNode in resourceNode.childNodes:
 					if resNode.nodeType != resNode.ELEMENT_NODE:
@@ -3593,7 +4469,13 @@ class ResourceAccess:
 					newResource = deserializeVizResource(resNode)
 					resourceList.append(newResource)
 
-				returnedMatches.append([int(domutil.getValue(allocIdNode)),domutil.getValue(userNameNode), resourceList])
+				returnedMatches.append({
+					'allocId':int(domutil.getValue(allocIdNode)),
+					'user':domutil.getValue(userNameNode), 
+					'resources':resourceList, 
+					'startTime': int(domutil.getValue(startTimeNode)),
+					'appName': domutil.getValue(appNameNode)
+				})
 
 		return returnedMatches
 
@@ -3648,7 +4530,7 @@ class ResourceAccess:
 			raise VizError(VizError.USER_ERROR, statusMessage)
 
 		rvNode = dom.getElementsByTagName("return_value")[0] # FIXME: replace this with "ssm/response/return_value"
-		srvNode = domutil.getChildNode(rvNode, "serverconfig")
+		srvNode = domutil.getChildNode(rvNode, Server.rootNodeName)
 		decodedObj = deserializeVizResource(srvNode, [Server])
 
 		return decodedObj
@@ -3675,9 +4557,9 @@ class ResourceAccess:
 		retObs = []
 		for tNode in allTemplateNodes:
 			try:
-				newOb = deserializeVizResource(tNode, [GPU, DisplayDevice])
+				newOb = deserializeVizResource(tNode, [GPU, DisplayDevice, Keyboard, Mouse])
 			except ValueError, e:
-				raise VizError(VizError.INTERNAL_ERROR, "Incorrect return XML from the SSM")
+				raise VizError(VizError.INTERNAL_ERROR, "Incorrect return XML from the SSM during getTemplates")
 			retObs.append(newOb)
 
 		return retObs
@@ -3871,7 +4753,7 @@ class ResourceAccess:
 
 class VizNode(VizResourceAggregate):
 	rootNodeName = "node"
-	ALL_PROPERTIES = ['remote_hostname']
+	ALL_PROPERTIES = ['remote_hostname', 'fast_network']
 
 	def __clearAll(self):
 		self.resIndex = None
@@ -3883,9 +4765,24 @@ class VizNode(VizResourceAggregate):
 	def __init__(self, hostName=None, model=None, idx = None):
 		self.resClass = "VizNode"
 		self.__clearAll()
+		VizResource.__init__(self)
 		self.resIndex = idx
 		self.hostName = hostName
 		self.resType = model
+
+	def getAllocationDOF(self):
+		# Ignore index of node
+
+		return 3
+
+	def getAllocationWeight(self):
+		"""
+		Returns our bias as the weight. No preference is given directly to the 
+		node based on its index.
+		NOTE: However, the allocation algorithm does choose the node with the 
+		lower index, if all else is the same.
+		"""
+		return self.allocationBias
 
 	def setProperty(self, propName, propVal):
 		if propName not in VizNode.ALL_PROPERTIES:
@@ -3950,6 +4847,8 @@ class VizNode(VizResourceAggregate):
 			ret += "<hostname>%s</hostname>"%(self.hostName)
 		if self.resType is not None:
 			ret += "<model>%s</model>"%(self.resType)
+		if self.allocationBias is not None:
+			ret += "<weight>%s</weight>"%(self.allocationBias)
 		if len(self.properties)>0:
 			ret += "<properties>"
 			for propName in self.properties:
@@ -3979,6 +4878,8 @@ class VizNode(VizResourceAggregate):
 		for xmlNode in domutil.getAllChildNodes(domNode):
 			if xmlNode.nodeName == "index":
 				self.resIndex = int(domutil.getValue(xmlNode))
+			elif xmlNode.nodeName == "weight":
+				self.allocationBias = int(domutil.getValue(xmlNode))
 			elif xmlNode.nodeName == "hostname":
 				self.hostName = domutil.getValue(xmlNode)
 			elif xmlNode.nodeName == "model":

@@ -47,6 +47,7 @@
 #include <stdlib.h>
 #include <errno.h>
 #include <signal.h>
+#include <string.h>
 
 int g_signotify_pipe[2];
 #define CODE_SIGCHLD '0'
@@ -63,6 +64,18 @@ void addNotification(int whichPipe[2], unsigned char c)
 void sigchild_handler(int sig)
 {
 	addNotification(g_signotify_pipe, CODE_SIGCHLD);
+}
+void sigint_handler(int sig)
+{
+	addNotification(g_signotify_pipe, CODE_SIGINT);
+}
+void sigterm_handler(int sig)
+{
+	// Handle TERM once. We have a loop which guarantees a KILL after a timeout.
+	static bool termProcessed = false;
+	if(!termProcessed)
+		addNotification(g_signotify_pipe, CODE_SIGTERM);
+	termProcessed = true;
 }
 
 #define RETRY_ON_EINTR(ret, x)  { \
@@ -84,7 +97,6 @@ int main(int argc, char** argv)
 		exit(-1);
 	}
 
-	//
 	// When the user did SSH and directly executed this program, 
 	// I notice that the program is already a process group leader !
 	// SSH probably does this. We avoid failure by not trying to create
@@ -105,6 +117,30 @@ int main(int argc, char** argv)
 		exit(-1);
 	}
 
+	bool hasStdin = true;
+	int cmdBase = 1;
+	if(strcmp(argv[1],"-ignorestdin")==0)
+	{
+		hasStdin = false;
+		cmdBase=2;
+		if(argc<3)
+		{
+			fprintf(stderr, "You need to specify atleast a program to run.\n");
+			exit(-1);
+		}
+	}
+
+	int childIO[2];
+	if(hasStdin)
+	{
+		if(pipe(childIO)<0)
+		{
+			perror("vs-aew : Failed to create pipe!");
+			exit(-1);
+		}
+	}
+
+
 	// Register SIGCHLD handler first so that we get exit notifications from our child
 	// app
 	struct sigaction siginfo;
@@ -112,6 +148,16 @@ int main(int argc, char** argv)
 	siginfo.sa_flags = SA_RESTART; 
 	sigemptyset (&siginfo.sa_mask);
 	sigaction(SIGCHLD, &siginfo, NULL);
+
+	siginfo.sa_handler = sigint_handler;
+	siginfo.sa_flags = SA_RESTART; 
+	sigemptyset (&siginfo.sa_mask);
+	sigaction(SIGINT, &siginfo, NULL);
+
+	siginfo.sa_handler = sigterm_handler;
+	siginfo.sa_flags = SA_RESTART; 
+	sigemptyset (&siginfo.sa_mask);
+	sigaction(SIGTERM, &siginfo, NULL);
 
 	int childpid = fork();
 	if(childpid<0)
@@ -125,23 +171,85 @@ int main(int argc, char** argv)
 		close(g_signotify_pipe[0]);
 		close(g_signotify_pipe[1]);
 
+		if(hasStdin)
+		{
+			// close the write end; we don't need it
+			close(childIO[1]);
+			dup2(childIO[0], 0);
+			close(childIO[0]); // close after duplication
+		}
 		//char *newenviron[] = { NULL };
 		//execve(argv[1], argv+1, newenviron);
-		execvp(argv[1], argv+1);
+		execvp(argv[cmdBase], argv+cmdBase);
 		perror("vs-aew : Failed to start application");
-		fprintf(stderr, "The program specified to run was '%s'\n", argv[1]);
+		fprintf(stderr, "The program specified to run was '%s'\n", argv[cmdBase]);
 		exit(-1);
 	}
 
+	// close the read end - we don't need it
+	if (hasStdin)
+		close(childIO[0]);
+
 	int retCode = 0;
 	bool loopDone = false;
+	unsigned int kill9timeout = 0;
+	unsigned int killTimeout = -1;
+	bool killDone = false;
+
+#define KILLTIMEOUT 20
+
 	while(!loopDone)
 	{
+		if(killTimeout==0)
+		{
+			// If kill timeout expired, then send the term signal
+			if(!killDone)
+			{
+				kill(0, SIGTERM);
+				kill9timeout = KILLTIMEOUT;
+			}
+			killTimeout = -1;
+		}
+		if(kill9timeout >0)
+		{
+			kill9timeout--;
+			if(kill9timeout==0)
+			{
+				fprintf(stderr, "Timeout. Terminating child processes in the process group.\n");
+				kill(0, SIGKILL);
+			}
+		}
+		else
+		// Kill everyone if our parent process died !
+		if(getppid()==1)
+		{
+			if(!killDone)
+			{
+				kill(0, SIGTERM);
+				kill9timeout = KILLTIMEOUT;
+				killDone = true;
+			}
+		}
+
 		fd_set rfds;
 		FD_ZERO(&rfds);
-		FD_SET(0,&rfds); // set to react to stdin
+		if(hasStdin)
+		{
+			FD_SET(0,&rfds); // set to react to stdin
+		}
 		FD_SET (g_signotify_pipe[0], &rfds);
-		int ret = select(g_signotify_pipe[0]+1, &rfds,  NULL, NULL, NULL);
+
+		struct timeval tv;
+		tv.tv_sec = 1;
+		tv.tv_usec = 0;
+
+		int ret = select(g_signotify_pipe[0]+1, &rfds,  NULL, NULL, &tv);
+
+		if(killTimeout>0)
+		{
+			killTimeout --;
+		}
+
 		if(ret<0)
 		{
 			if(errno==EINTR)
@@ -165,8 +273,9 @@ int main(int argc, char** argv)
 					// a child process exited.
 					{
 						int exitstatus;
+						int retpid;
 						// did our child X server exit ?
-						if(waitpid(childpid, &exitstatus, WNOHANG)==childpid)
+						if((retpid=waitpid(childpid, &exitstatus, WNOHANG))==childpid)
 						{
 							loopDone = true;
 							retCode = -1;
@@ -182,25 +291,34 @@ int main(int argc, char** argv)
 						}
 						else
 						{
-							// other child process exits cause us to come here.
-							fprintf(stderr, "FATAL: Bad case - we aren't supposed to have any other child processes!\n");
-							exit(-1);
+							if(retpid!=0)
+							{
+								// other child process exits cause us to come here.
+								fprintf(stderr, "FATAL: Bad case. pid=%d - we aren't supposed to have any other child processes!\n",retpid);
+								exit(-1);
+							}
 						}
 					}
 					break;
 				case CODE_SIGTERM: 
-					kill(childpid, SIGTERM);
+					kill(0, SIGTERM);
+					//fprintf(stderr, "vs-aew : Propagating SIGTERM to process group(all child procs)\n");
+					if(kill9timeout==0)
+						kill9timeout = KILLTIMEOUT;
 					break;
 
 				case CODE_SIGINT: 
-					kill(childpid, SIGINT);
+					kill(0, SIGINT);
+					//fprintf(stderr, "vs-aew : Propagating SIGINT to process group(all child procs)\n");
+					if(kill9timeout==0)
+						kill9timeout = KILLTIMEOUT;
 					break;
 			}
 		}
 
 		// don't proceed if there's nothing on stdin
 		// All the code after this check handles input from stdin
-		if(!FD_ISSET(0, &rfds))
+		if((!hasStdin) || (!FD_ISSET(0, &rfds)))
 			continue;
 
 		char buf[8192];
@@ -222,7 +340,7 @@ int main(int argc, char** argv)
 			int nRemaining = nRead;
 			do
 			{
-				int nWritten = write(1, writep, nRemaining);
+				int nWritten = write(childIO[1], writep, nRemaining);
 				if(nWritten<0)
 				{
 					if(errno==EINTR)
@@ -234,6 +352,9 @@ int main(int argc, char** argv)
 					}
 				}
 				else
+				if(nWritten==0)
+					break;
+				else
 				{
 					nRemaining -= nWritten;
 				}
@@ -242,9 +363,13 @@ int main(int argc, char** argv)
 		else
 		{
 			// nRead = 0 means EOF!
-			// Respond by sending TERM to the process group
-			kill(-getpid(), SIGTERM);
+			// close child's STDIN
+			close(childIO[1]);
+
+			// Any interactive process will react in a couple of seconds by reading stdin
+			killTimeout = 2;
 		}
 	}
+
 	exit(retCode);
 }

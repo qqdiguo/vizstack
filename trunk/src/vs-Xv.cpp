@@ -55,10 +55,8 @@
 
 #include <netdb.h>
 #include "vsdomparser.hpp"
-#include <xercesc/framework/StdOutFormatTarget.hpp>
-#include <xercesc/framework/LocalFileFormatTarget.hpp>
-#include <xercesc/dom/DOMWriter.hpp>
-XERCES_CPP_NAMESPACE_USE
+#include "vscommon.h"
+
 using namespace std;
 
 int g_signotify_pipe[2];
@@ -83,11 +81,6 @@ bool g_debugPrints=false;
 	} \
 }
 	
-void closeSocket(int fd)
-{
-	shutdown(fd, SHUT_RDWR);
-	close(fd);
-}
 void addNotification(int whichPipe[2], unsigned char c)
 {
 	write(whichPipe[1], &c, 1);
@@ -117,277 +110,6 @@ void int_handler(int sig)
 {
 	addNotification(g_signotify_pipe, CODE_SIGINT);
 }
-
-
-bool g_standalone = false;
-string g_ssmHost;
-string g_ssmPort;
-
-bool getSystemType()
-{
-	char myHostName[256];
-	gethostname(myHostName, sizeof(myHostName));
-
-	VSDOMParserErrorHandler errorHandler;
-	// Load the display device templates
-	VSDOMParser *configParser = new VSDOMParser;
-
-	errorHandler.resetErrors();
-	DOMDocument *config = configParser->Parse("/etc/vizstack/master_config.xml", true, errorHandler);
-
-	// Print out warning and error messages
-	vector<string> msgs;
-	errorHandler.getMessages (msgs);
-	for (unsigned int i = 0; i < msgs.size (); i++)
-		cout << msgs[i] << endl;
-
-	if(!config)
-	{
-		cerr << "ERROR: Unable to get the local configuration of this node." << endl;
-		return false;
-	}
-
-	DOMNode* rootNode = (DOMNode*)config->getDocumentElement();
-	DOMNode* systemNode = getChildNode(rootNode, "system");
-	DOMNode* systemTypeNode = getChildNode(systemNode, "type");
-	string systemType = getValueAsString(systemTypeNode);
-	bool isStandalone;
-	if(systemType=="standalone")
-		g_standalone = true;
-	else
-	{
-		DOMNode *masterNode = getChildNode(systemNode, "master");
-		if(!masterNode)
-		{
-			cerr << "ERROR: Invalid configuration. You must specify a master." << endl;
-			return false;
-		}
-		g_ssmHost = getValueAsString(masterNode);
-
-		DOMNode *masterPortNode = getChildNode(systemNode, "master_port");
-		if(!masterPortNode)
-		{
-			cerr << "ERROR: Invalid configuration. You must specify a master port." << endl;
-			return false;
-		}
-
-		g_ssmPort = getValueAsString(masterPortNode);
-		if(g_ssmHost != "localhost")
-		{
-			int portNum = atoi(g_ssmPort.c_str());
-			char buffer[100];
-			sprintf(buffer, "%d",portNum);
-			if((portNum<=0) or (g_ssmPort != buffer))
-			{
-				cerr << "ERROR: Invalid configuration. Please check the master port you have specified '%s' for errors." << endl;
-				return false;
-			}
-		}
-		else
-		if(g_ssmPort.size()>100) // prevent buffer overruns
-		{
-			cerr << "ERROR: Invalid configuration. The master port you have specified '%s' is too long (limit : 100 chars)." << endl;
-			return false;
-		}
-
-		g_standalone = false;
-	}
-
-	return true;
-}
-
-int write_bytes(int socket, const char *buf, int nBytes)
-{
-	int nBytesWritten = 0;
-	const char *ptr = buf;
-	while(nBytesWritten != nBytes)
-	{
-		int ret = send(socket, ptr, nBytes - nBytesWritten, MSG_NOSIGNAL);
-		if(ret==-1)
-		{
-			if(errno==EINTR)
-				continue;
-			else
-			{
-				return nBytesWritten;
-			}
-		}
-		else
-		{
-			nBytesWritten += ret;
-			ptr += ret;
-		}
-	}
-	return nBytesWritten;
-}
-
-int read_bytes(int socket, char *buf, int nBytes)
-{
-	int nBytesRead = 0;
-	char *ptr = buf;
-	while(nBytesRead != nBytes)
-	{
-		int ret = recv(socket, ptr, nBytes - nBytesRead, MSG_WAITALL);
-		if(ret==-1)
-		{
-			if(errno==EINTR)
-				continue;
-			else
-			{
-				return nBytesRead;
-			}
-		}
-		else
-		if(ret==0)
-		{
-			// EOF !
-			break;
-		}
-		else
-		{
-			nBytesRead += ret;
-			ptr += ret;
-		}
-	}
-	return nBytesRead;
-}
-
-bool write_message(int socket, const char* data, unsigned int dataLen)
-{
-	char sizeStr[6];
-
-	// FIXME: can't handle messages larger than this due to the protocol limitations
-	// centralize the protocol limitations.
-	if(dataLen>99999) 
-	{
-		return false;
-	}
-	sprintf(sizeStr,"%d", dataLen);
-	while(strlen(sizeStr)<5)
-		strcat(sizeStr, " ");
-
-	if(write_bytes(socket, sizeStr, 5)!=5)
-	{
-		return false;
-	}
-
-	if(write_bytes(socket, data, dataLen)!=dataLen)
-	{
-		return false;
-	}
-
-	return true;
-}
-
-char* read_message(int socket)
-{
-	char sizeStr[6];
-
-	// get length first
-	if(read_bytes(socket, sizeStr, 5)!=5)
-	{
-		fprintf(stderr, "Socket error: Unable to get message length\n");
-		return 0;
-	}
-
-	int numMsgBytes = atoi(sizeStr);
-	if(numMsgBytes<0)
-	{
-		fprintf(stderr, "Socket error: Bad message length %d\n", numMsgBytes);
-		return 0;
-	}
-
-	char *message = new char[numMsgBytes+1];
-	if(read_bytes(socket, message, numMsgBytes)!=numMsgBytes)
-	{
-		fprintf(stderr, "Socket error: Unable to read entire message\n");
-		delete []message;
-		return 0;
-	}
-
-	// Null terminate the string - so easy to forget these details at times :-(
-	message[numMsgBytes] = 0;
-
-	return message;
-}
-
-char *munge_encode(const char *message)
-{
-	// FIXME: Do thorough error logging in this function
-	// failure here should be catchable !!!
-
-	// Summary for this function is:
-	// 1. we create a temporary file
-	// 2. put the message as the contents of the file
-	// 3. we pass that as input to munge
-	// 4. we get the credential from stdout
-	// 5. On error, undo stuff and return 0 !
-
-	char tempInputFile[256];
-	strcpy(tempInputFile, "/tmp/munge_encode_tmpXXXXXX");
-	int fd = mkstemp(tempInputFile);
-	if (fd==-1)
-		return 0;
-
-	// close the fd
-	close(fd);
-
-	FILE *fp=fopen(tempInputFile, "w");
-	if(!fp)
-	{
-		unlink(tempInputFile);
-		return 0;
-	}
-	if(fwrite(message, strlen(message), 1, fp)!=1)
-	{
-		fclose(fp);
-		unlink(tempInputFile);
-		return 0;
-	}
-	fclose(fp);
-
-	char cmdLine[4096];
-	sprintf(cmdLine, "munge --input %s",tempInputFile);
-	fp = popen(cmdLine,"r");
-	if(!fp)
-	{
-		fprintf(stderr, "ERROR Error - unable to run munge\n");
-		unlink(tempInputFile);
-		return 0;
-	}
-
-	string fileContent;
-	char data[4096];
-	while(1)
-	{
-		int nRead = fread(data, 1, sizeof(data), fp);
-
-		if(nRead>0)
-		{
-			data[nRead]=0;
-			fileContent = fileContent + data;
-		}
-
-		if (feof(fp))
-		{
-			break;
-		}
-	}
-	int exitCode = pclose(fp);
-
-
-	if(exitCode != 0)
-	{
-		fprintf(stderr, "ERROR Error - unable to get munge credential\n");
-		unlink(tempInputFile);
-		return false;
-	}
-
-	unlink(tempInputFile);
-	return strdup(fileContent.c_str());
-}
-
-
 
 int main(int argc, char**argv)
 {
@@ -520,14 +242,16 @@ int main(int argc, char**argv)
 		}
 
 		string myIdentity;
-		myIdentity = "<serverconfig>";
+		myIdentity = "<xclient>";
+		myIdentity += "<server>";
 		myIdentity += "<hostname>";
 		myIdentity += myHostName;
 		myIdentity += "</hostname>";
 		myIdentity += "<server_number>";
 		myIdentity += (xdisplay+1);
 		myIdentity += "</server_number>";
-		myIdentity += "</serverconfig>";
+		myIdentity += "</server>";
+		myIdentity += "</xclient>";
 
 		char *encodedCred = 0;
 		if(g_ssmHost == "localhost")
@@ -565,10 +289,10 @@ int main(int argc, char**argv)
 		sprintf(message,
 			"<ssm>\n"
 			"	<get_serverconfig>\n"
-			"		<serverconfig>\n"
+			"		<server>\n"
 			"			<hostname>%s</hostname>\n"
 			"			<server_number>%s</server_number>\n"
-			"		</serverconfig>\n"
+			"		</server>\n"
 			"	</get_serverconfig>\n"
 			"</ssm>\n", myHostName, xdisplay+1);
 
@@ -593,7 +317,7 @@ int main(int argc, char**argv)
 		VSDOMParserErrorHandler errorHandler;
 		VSDOMParser *configParser = new VSDOMParser;
 		errorHandler.resetErrors();
-		DOMDocument *config = configParser->Parse(serverConfiguration, false, errorHandler);
+		VSDOMDoc *config = configParser->ParseString(serverConfiguration, errorHandler);
 		if(!config)
 		{
 			// Print out warning and error messages
@@ -612,37 +336,37 @@ int main(int argc, char**argv)
 		}
 
 		// Ensure that return status is "success"
-		DOMNode* rootNode = (DOMNode*)config->getDocumentElement();
-		DOMNode* responseNode = getChildNode(rootNode, "response");
-		int status = getValueAsInt(getChildNode(responseNode, "status"));
+		VSDOMNode rootNode = config->getRootNode();
+		VSDOMNode responseNode = rootNode.getChildNode("response");
+		int status = responseNode.getChildNode("status").getValueAsInt();
 		if(status!=0)
 		{
-			string msg = getValueAsString(getChildNode(responseNode, "message"));
+			string msg = responseNode.getChildNode("message").getValueAsString();
 			fprintf(stderr, "ERROR - Failure returned from SSM : %s\n", msg.c_str());
 			delete configParser;
 			closeSocket(ssmSocket);
 			exit(-1);
 		}
 		
-		DOMNode* retValNode = getChildNode(responseNode, "return_value");
-		DOMNode *serverConfig = getChildNode(retValNode, "serverconfig");
-		DOMNode *ownerNode = getChildNode(serverConfig, "owner");
-		if(!ownerNode)
+		VSDOMNode retValNode = responseNode.getChildNode("return_value");
+		VSDOMNode serverConfig = retValNode.getChildNode("server");
+		VSDOMNode ownerNode = serverConfig.getChildNode("owner");
+		if(ownerNode.isEmpty())
 		{
 			fprintf(stderr, "ERROR: Can't proceed; the owner for the X server is not specified by the SSM\n");
 			delete configParser;
 			closeSocket(ssmSocket);
 			exit(-1);
 		}
-		DOMNode *svTypeNode = getChildNode(serverConfig, "server_type");
-		if(!svTypeNode)
+		VSDOMNode svTypeNode = serverConfig.getChildNode("server_type");
+		if(svTypeNode.isEmpty())
 		{
 			fprintf(stderr, "ERROR: Can't proceed; the type of the X server was not specified by the SSM\n");
 			delete configParser;
 			closeSocket(ssmSocket);
 			exit(-1);
 		}
-		string svType = getValueAsString(svTypeNode);
+		string svType = svTypeNode.getValueAsString();
 		if (svType != "virtual")
 		{
 			fprintf(stderr, "ERROR: vs-X manages only 'virtual' X servers. It can't manage servers of type '%s'\n",svType.c_str());
@@ -650,7 +374,7 @@ int main(int argc, char**argv)
 			closeSocket(ssmSocket);
 			exit(-1);
 		}
-		int ownerUid = getValueAsInt(ownerNode);
+		int ownerUid = ownerNode.getValueAsInt();
 		// Allow the owner of this server to start the X server.
 		if(ownerUid != userUid)
 		{
@@ -890,7 +614,7 @@ int main(int argc, char**argv)
 						"<ssm>"
 							"<update_x_avail>"
 								"<newState>1</newState>"
-									"<serverconfig>";
+									"<server>";
 					notifyMessage += "<hostname>";
 					notifyMessage += myHostName;
 					notifyMessage += "</hostname>";
@@ -898,7 +622,7 @@ int main(int argc, char**argv)
 					notifyMessage += (xdisplay+1);
 					notifyMessage += "</server_number>";
 					notifyMessage +=
-									"</serverconfig>"
+									"</server>"
 								"</update_x_avail>"
 						"</ssm>";
 
@@ -970,14 +694,14 @@ int main(int argc, char**argv)
 		"<ssm>"
 			"<update_x_avail>"
 				"<newState>0</newState>"
-					"<serverconfig>";
+					"<server>";
 	notifyMessage += "<hostname>";
 	notifyMessage += myHostName;
 	notifyMessage += "</hostname>";
 	notifyMessage += "<server_number>";
 	notifyMessage += (xdisplay+1);
 	notifyMessage += "</server_number>";
-	notifyMessage += "</serverconfig>"
+	notifyMessage += "</server>"
 				"</update_x_avail>"
 		"</ssm>";
 

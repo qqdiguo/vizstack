@@ -25,8 +25,9 @@ Command line tool to display, create & delete tiled displays.
 This tool works irrespective of whether the SSM is running or
 not. This file edits /etc/vizstack/resource_group_config.xml.
 """
-import vsapi
 import sys
+sys.path.append('/opt/vizstack/python') # Add path of our python modules
+import vsapi
 import vsutil
 import readline # for nice line editing in raw_input
 from pprint import pprint
@@ -35,6 +36,7 @@ import domutil
 import xml
 import os
 import socket
+import string
 
 def refresh_ssm_resource_groups():
 	"""
@@ -299,11 +301,11 @@ def get_bool(msg, default=None):
 			return False
 		print >>sys.stderr, "Invalid choice '%s'. Please enter a valid value"%(choice)
 
-def get_string(msg, validator=None):
+def get_string(msg, validator=None, allowEmpty=False):
 	while True:
 		print
 		value = raw_input("%s:"%(msg))
-		if len(value) == 0:
+		if (not allowEmpty) and (len(value) == 0):
 			print >>sys.stderr, "Empty strings not allowed. Please enter a valid value"
 		else:
 			if validator is not None:
@@ -435,8 +437,10 @@ def create_tiled_display(localConfig):
 	validGPUs = []
 	validGPUNames = []
 	validHostInfo = {}
+	gpuRef = {}
 	for gpu in allGPUs:
-		if gpu.searchMatch(scanoutGPU):
+		if gpu.typeSearchMatch(scanoutGPU):
+			gpuRef[gpu.hashKey()] = gpu
 			validGPUs.append(gpu)
 			validGPUNames.append("%s/%d"%(gpu.getHostName(), gpu.getIndex()))
 			if validHostInfo.has_key(gpu.getHostName()):
@@ -451,7 +455,7 @@ def create_tiled_display(localConfig):
 	validSLIs = []
 	has_quadroplex = False
 	for sli in allSLIs:
-		if sli.searchMatch(qpSLI):
+		if sli.typeSearchMatch(qpSLI):
 			validHostInfo[sli.getHostName()]['quadroplex'].append([sli.getIndex(), sli.getGPUIndex(0), sli.getGPUIndex(1)])
 			has_quadroplex = True
 
@@ -459,7 +463,7 @@ def create_tiled_display(localConfig):
 	allServers = vsapi.extractObjects(vsapi.Server, allResources)
 	normalServer = vsapi.Server()
 	for srv in allServers:
-		if srv.searchMatch(normalServer):
+		if srv.typeSearchMatch(normalServer):
 			if validHostInfo.has_key(srv.getHostName()):
 				validHostInfo[srv.getHostName()]['server'].append(srv.getIndex())
 
@@ -472,15 +476,16 @@ def create_tiled_display(localConfig):
 		return name
 			
 	tdName = get_string("Enter a name for the tiled display", tdValidator)
+	tdDesc = get_string("Enter a description for this tiled display. Users will see this\ninformation, so enter something that gives useful information\nabout the tiled display")
 
 	ddInfo = []
-	for ddName in localConfig['templates']['display_device']:
+	for ddName in localConfig['templates']['display']:
 		ddInfo.append([ddName, ddName])
 		
 	display_device = show_menu("Choose the display device you want to use on all displays", ddInfo)
 
 	modeInfo = []
-	ddTemplate = localConfig['templates']['display_device'][display_device]
+	ddTemplate = localConfig['templates']['display'][display_device]
 	modeInfo = []
 	defaultMode = ddTemplate.getDefaultMode()
 	for mode in ddTemplate.getAllModes():
@@ -492,7 +497,7 @@ def create_tiled_display(localConfig):
 		display_mode = show_menu("Choose the display mode you want to use on all displays", modeInfo, defaultIndex)
 	else:
 		display_mode = defaultMode['alias']
-		print "Display device %s has only one mode defined, '%s'. Using it."%(display_mode)
+		print "Display device %s has only one mode defined, '%s'. Using it."%(display_device, display_mode)
 
 	stereo_opts = []
 	stereo_opts.append([ "No Stereo", None ])
@@ -501,13 +506,6 @@ def create_tiled_display(localConfig):
 	stereo_opts.append([ "Auto-Stereoscopic SeeReal DFP (suitable for Tridelity SV displays)", "SeeReal_stereo_dfp" ])
 	stereo_opts.append([ "Auto-Stereoscopic Sharp DFP", "Sharp3D_stereo_dfp" ])
 	stereo_mode = show_menu("Choose the stereo mode you want to use", stereo_opts, 0)
-
-	display_rotation = show_menu("Have you rotated your displays physically ?",
-	                 [
-	                   ["No", None],
-	                   ["Yes, my displays are rotated 90 degress to the left  [Portait           ]", "portrait"],
-	                   ["Yes, my displays are rotated 90 degrees to the right [Inverted Portrait ]", "inverted_portrait"],
-	                   ["Yes, my displays are rotated 180 degrees             [Inverted Landscape]", "inverted_landscape"]], 0)
 
 	if stereo_mode == "passive":
 		block_type = "gpu"
@@ -518,6 +516,17 @@ def create_tiled_display(localConfig):
 		else:
 			print "Assuming GPU blocks, since you do not have QuadroPlex in your configuration"
 			block_type = "gpu"
+
+	if block_type == "gpu":
+		display_rotation = show_menu("Have you rotated your displays physically ?",
+		                 [
+		                   ["No", None],
+		                   ["Yes, my displays are rotated 90 degress to the left  [Portait           ]", "portrait"],
+		                   ["Yes, my displays are rotated 90 degrees to the right [Inverted Portrait ]", "inverted_portrait"],
+		                   ["Yes, my displays are rotated 180 degrees             [Inverted Landscape]", "inverted_landscape"]], 0)
+	else:
+		print "Display rotation cannot be done with SLI mosaic mode; so assuming your displays are not rotated."
+		display_rotation = None
 
 	if block_type == "gpu":
 		blockStr = "GPU"
@@ -543,6 +552,7 @@ def create_tiled_display(localConfig):
 		                      [ "Four displays one below the other  (1x4)", [1,4] ],
 		                      [ "Four displays as a 2x2 square      (2x2)", [2,2] ],
 		                     ])
+
 
 	w = get_integer("Enter the width of the tiled display in %ss"%(blockStr),1,10)
 	h = get_integer("Enter the height of the tiled display in %ss"%(blockStr),1,10)
@@ -666,8 +676,8 @@ def create_tiled_display(localConfig):
 		thisServer = tdServers[0]
 		searchKbd = vsapi.Keyboard(hostName=thisServer.getHostName())
 		searchMouse = vsapi.Mouse(hostName=thisServer.getHostName())
-		kbdsOnThisHost = filter(lambda x: x.searchMatch(searchKbd), vsapi.extractObjects(vsapi.Keyboard, allResources))
-		miceOnThisHost = filter(lambda x: x.searchMatch(searchMouse), vsapi.extractObjects(vsapi.Mouse, allResources))
+		kbdsOnThisHost = filter(lambda x: x.typeSearchMatch(searchKbd), vsapi.extractObjects(vsapi.Keyboard, allResources))
+		miceOnThisHost = filter(lambda x: x.typeSearchMatch(searchMouse), vsapi.extractObjects(vsapi.Mouse, allResources))
 
 		if len(kbdsOnThisHost)>0 and len(miceOnThisHost)>0:
 			useInput = get_bool("Do you want to define a keyboard & mouse for this tiled display?")
@@ -702,6 +712,86 @@ def create_tiled_display(localConfig):
 				resources[0].append(kbdToUse)
 				resources[0].append(mouseToUse)
 
+	print
+	print "VizStack typically configures GPUs as follows:"
+	print "  - If each GPU drives one display, then display output 0 is used"
+	print "  - If each GPU drives two displays, then display outputs 0 and 1 are used"
+	print
+	print "You may have a need to connect displays on some other port. Examples:"
+	print " - You may have a DisplayPort cable and may want to connect it directly to an FX5800."
+	print "   The DisplayPort output is display output 2, so you need to tell VizStack to"
+	print "   use that. In this case, you are remapping display 0 to 2. The remap value you need"
+	print "   to use would be 2 in this case"
+	print " - You have connected port 0 of an FX5800 to a KVM. Port 1 and port 2 are connected to"
+	print "   your actual display devices. In this case, you are remapping 0 to 1, and 1 to 2. The"
+	print "   remap value to use would be 1,2 in this cae"
+	print " - You have a GPU like a QuadroNVS 420. If you have a DVI dongle, then you do not need"
+	print "   to use a remap value. If you have a DisplayPort dongle, then you need to use a remap"
+	print "   value of 2 if you are using a single display, or 2,3 if you are using both displays"
+	print "   per GPU."
+	print
+
+	remap_display_outputs = None
+	usedGPUs = map(lambda x: gpuRef[x.hashKey()], vsapi.extractObjects(vsapi.GPU, resources))
+	# NOTE: Max is min ! Same remapping value is applied to all GPUs, so we need to enforce this!
+	maxScanout = min(map(lambda x: len(x.getScanoutCaps()), usedGPUs))-1
+	numInputs = block_display_layout[0]*block_display_layout[1]
+	if block_type != "gpu":
+		if numInputs>2:
+			numInputs = 2
+	labels = ["n","m","o","p","q"]
+	labelStr = string.join(map(lambda x: labels[x], range(numInputs)),",")
+
+	while 1:
+		remap_do = get_string("Enter a value for remap_display_outputs, in the format '%s'.\nEnter empty input if you don't need remapping"%(labelStr), allowEmpty=True)
+		remap_do = remap_do.lstrip().rstrip()
+		if len(remap_do)==0:
+			break
+		remaps = remap_do.split(",")
+		if len(remaps)!=numInputs:
+			print "Invalid input. Must be in the format '%s'"%(labelStr)
+			continue
+		remap_value = []
+		try:
+			for rmpv in remaps:
+				try:
+					val = int(rmpv)
+				except ValueError, e:
+					raise ValueError, "Invalid input '%s'. Expecting integer"%(rmpv)
+				if (val<0) or (val>maxScanout):
+					raise ValueError, "Invalid input '%s'. Expecting integer in range [0,%d]"%(rmpv,maxScanout)
+
+				isDuplicate = False
+				try:
+					remap_value.index(val)
+					isDuplicate = True
+				except ValueError:
+					remap_value.append(val)
+				if isDuplicate:
+					raise ValueError, "Value '%s' has been repeated. All values in the remap list must be unique."%(val)
+				
+		except ValueError, e:
+			print str(e)
+			continue
+
+		remap_display_outputs = "["+string.join(map(lambda x:str(x), remap_value), ",")+"]"
+		break
+
+	print
+	print "VizStack can setup display synchronization on tiled display's using Framelock."
+	print "Enabling framelock can help you get tear-free images on tiled displays and"
+	print "display walls."
+	print
+	print "To enable framelock on a tiled display, you need to have every graphics card "
+	print "connected to a G-Sync card, and the G-sync cards need to be 'chained' together."
+	print "G-sync cards are built into quadroplexes; however, you still need to wire the"
+	print "cards together."
+	print
+	print "If you have setup this tiled display for framelock, then you may choose to"
+	print "answer 'yes' below. Note that scripts that work with tiled displays may fail"
+	print "if framelock cannot be enabled."
+	framelock = get_bool("Do you want to enable framelock on this tiled display?(default n)", False)
+
 	tdText = ""
 	for resList in resources:
 		tdText += "\t\t<reslist>\n"
@@ -720,13 +810,17 @@ def create_tiled_display(localConfig):
 		handler_params += "\t\tcombine_displays=True;\n"
 	handler_params += "\t\tdisplay_device='%s';\n"%(display_device)
 	handler_params += "\t\tdisplay_mode='%s';\n"%(display_mode)
+	if remap_display_outputs is not None:
+		handler_params += "\t\tremap_display_outputs=%s;\n"%(remap_display_outputs)
 	if stereo_mode:
 		handler_params += "\t\tstereo_mode='%s';\n"%(stereo_mode)
+	handler_params += "\t\tframelock=%s;\n"%(framelock)
 	
 	tdText ="""
 <resourceGroup>
 \t<name>%s</name>
 \t<handler>tiled_display</handler>
+\t<description>%s</description>
 \t<handler_params>
 %s
 \t</handler_params>
@@ -734,7 +828,7 @@ def create_tiled_display(localConfig):
 %s
 \t</resources>
 </resourceGroup>
-"""%(tdName, handler_params, tdText)
+"""%(tdName, tdDesc, handler_params, tdText)
 
 	newRG = vsapi.ResourceGroup(tdName, 'tiled_display', handler_params, resources)
 	display_td_info(newRG, localConfig)
@@ -812,7 +906,7 @@ def display_td_info(rg, localConfig):
 		for sli in vsapi.extractObjects(vsapi.SLI, reslist):
 			matchSLI = None
 			for res in vsapi.extractObjects(vsapi.SLI, allResources):
-				if res.searchMatch(sli):
+				if res.typeSearchMatch(sli):
 					matchSLI = res
 					break
 			if matchSLI is None:
@@ -833,6 +927,8 @@ def display_td_info(rg, localConfig):
 	display_device = td.getParam('display_device')
 	display_mode = td.getParam('display_mode')
 	stereo_mode = td.getParam('stereo_mode')
+	framelock = td.getParam('framelock')
+	remap_display_outputs = td.getParam('remap_display_outputs')
 	if stereo_mode is not None:
 		stereo_mode = vsapi.Screen.stereoModes[stereo_mode]
 	rotate = td.getParam('rotate')
@@ -848,6 +944,8 @@ def display_td_info(rg, localConfig):
 	print "Display Mode                 : %s"%(display_mode)
 	print "Stereo                       : %s"%(stereo_mode)
 	print "Display Rotation             : %s"%(rotate)
+	print "Display Remapping            : %s"%(remap_display_outputs)
+	print "Framelock                    : %s"%(framelock)
 	print
 	print_td(block_type, block_display_layout, num_blocks, group_blocks, blockNames, serverNames)
 	print

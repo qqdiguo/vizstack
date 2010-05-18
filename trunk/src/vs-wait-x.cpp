@@ -24,6 +24,8 @@
 // Adds access to the X server for the invoking user
 // Connect to the X server and wait till it exits.
 //
+// Typically meant to be invoked as a client program by
+// xinit
 #include <X11/Xlib.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -32,6 +34,7 @@
 #include <string>
 #include <sys/types.h>
 #include <pwd.h>
+#include <signal.h>
 
 using namespace std;
 
@@ -50,10 +53,13 @@ int main()
 	Display *dpy = XOpenDisplay(0);
 	if(!dpy)
 	{
+		cerr << "==============================" << endl;
+		cerr << "FATAL error"<< endl;
 		cerr << "Unable to connect to X server." << endl;
+		cerr << "==============================" << endl;
 		exit(-1);
 	}
-
+#if 1
 	string cmd;
 	cmd = "xhost +si:localuser:";
 	cmd += pwd.pw_name;
@@ -63,13 +69,19 @@ int main()
 		cerr << "Failed to add user access to X server. Exiting." << endl;
 		exit(-1);
 	}
-
+#endif
 	// Get the FD of the connection to the X server. This lets
 	// us implement "wait-on-exit".
+	//
+	// Note that in case of a single X server being shared 
+	// multiple times by the same user, this does not work!
+	// Why ? Because the X server does not exit.
+	//
+	// However, the X server process does exit. That should
+	// be enough for xinit to kill us...
 	int xfd = ConnectionNumber(dpy);
 
-	bool doExit=false;
-	while(!doExit)
+	while(1)
 	{
 		fd_set rfds;
 		FD_ZERO(&rfds);
@@ -78,9 +90,16 @@ int main()
 		if(ret==1)
 		{
 			//cout << "X connection closed" << endl;
-			exit(0);
+			break;
 		}
 	}
+
+	// In the normal vizstack scheme, xinit is used to start
+	// vs-X and this client. Sometimes, I have observed that
+	// xinit continues to run inspite of both child processes
+	// having exited. So, I explicitly kill the parent xinit
+	// process at the end
+	kill(getppid(), SIGTERM);
 
 	exit(0);
 }

@@ -39,6 +39,11 @@ OPTIONS
     application in stereo, provided that the local X server is setup to
     enable Quad Buffered Stereo.
 
+*-x, --exclusive*::
+    Request exclusive access to a GPU. By default, a shared GPU is allocated.
+    Use this option to run GPU-intensive applications or for purposes like
+    benchmarking. Stereo usage always allocates a complete GPU.
+
 *--gpu-type*='TYPE'::
     Use a specific type of GPU 'TYPE' for this remote session. Note that  
     GPU types will have spaces in it, so you will need to quote the string.
@@ -97,10 +102,14 @@ Hello, VirtualGL!
 
 Hello, VirtualGL Stereo!
 
-*# viz_vgl -s glxgears -stereo*
+*# viz_vgl -s -- glxgears -stereo*
+
+Usage of -- allows you to run an application which itself
+uses options which begin with a hyphen.
 
 Note that the glxgears binary that comes with SLES10.2 does
-not support the stereo option.
+not support the stereo option. To run the stereo application,
+your local desktop must also be running with stereo enabled.
 
 Let's say you have a cygwin X server on your Windows desktop.
 SSH to the VizStack system with X11 forwarding (ssh -x).

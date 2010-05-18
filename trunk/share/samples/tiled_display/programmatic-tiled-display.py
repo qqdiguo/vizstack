@@ -63,7 +63,7 @@ myRG = vsapi.ResourceGroup(
 	    "block_type='gpu'", # Only accepted value
 	    "block_display_layout=[2,1]", # Each GPU will drive 2x1
 	    "num_blocks=[1,2]", # and GPUs will be arranged as 1x2. These two together will give us 2x2 out of a single node
-	    "display_device='LP2065'", # Use a HP LP2065 monitor as the display device. So no stereo :-(
+	    "display_device='HP LP2065'", # Use a HP LP2065 monitor as the display device. So no stereo :-(
 	], ";"), # This actually generates a valid python code fragment, with variables separated by ';'
 	resources = [
 		# The above parameters need two GPUs. We will supply those from
@@ -165,7 +165,7 @@ for rowNum in range(rows):
 		thisScreen = tdLayout[rowNum][colNum]
 		print "GPU %dx%d is %s "%(colNum, rowNum, thisScreen.getGPUs()[0])
 		# Run xwininfo & wait for it to finish.
-		proc = thisScreen.run("xwininfo -root")
+		proc = thisScreen.run(["xwininfo","-root")
 		proc.wait()
 
 # Stop the X servers

@@ -277,7 +277,7 @@ def promptUserForPassword(username, win):
 	return evt.password
 
 
-def doConnect(hostname, username, resolution, win):
+def doConnect(hostname, username, resolution, win, dedicatedGPU, dedicatedNode):
 	"""
 	Function to do the connection part
 	"""
@@ -296,7 +296,12 @@ def doConnect(hostname, username, resolution, win):
 			exe = "viz-rgs"
 		else:
 			exe = "viz-tvnc"
-		c.StartDialog("/opt/vizstack/bin/%s --automation -g %s"%(exe,resolution), exe)
+		cmd = "/opt/vizstack/bin/%s --automation -g %s"%(exe,resolution)
+		if dedicatedGPU:
+			cmd += " -x"
+		if dedicatedNode:
+			cmd += " -N"
+		c.StartDialog(cmd, exe)
 	except ConnectorError, e:
 		try:
 			c.Close()
@@ -401,7 +406,7 @@ class MyGUI(wx.Frame):
 
 		# GUI elements
 		label = wx.StaticText(self.panel, wx.ID_ANY, "VizStack Access (user@host). Default username is %s"%(getUserName()))
-		self.hostInput = wx.TextCtrl(self.panel, wx.ID_ANY, size=(150,-1)) # Height of -1 indicates "use the default"
+		self.hostInput = wx.TextCtrl(self.panel, wx.ID_ANY, size=(150,-1), style=wx.TE_PROCESS_ENTER) # Height of -1 indicates "use the default"
 		self.hostInput.SetToolTipString("Enter your username & VizStack master host here")
 		self.connectButton = wx.Button(self.panel, wx.ID_ANY, "Go!")
 		self.connectButton.SetToolTipString("Click to get your desktop!")
@@ -419,6 +424,11 @@ class MyGUI(wx.Frame):
 		resLabel = wx.StaticText(self.optionsPanel, wx.ID_ANY, "Desktop Resolution")
 		self.resEntry = wx.ComboBox(self.optionsPanel, wx.ID_ANY, style=wx.CB_DROPDOWN, choices=g_typicalResolutions, value=g_defaultResolution)
 		self.resEntry.SetToolTipString("Select from one of these resolutions. You may\ntype in your own <width>x<height> value as well.\n\nNote that the desktop width needs to be a multiple of 8.")
+		self.dedicatedNode = wx.CheckBox(self.optionsPanel, wx.ID_ANY, "Dedicated Node")
+		if g_clientType==CLIENT_TVNC:
+			self.exclusiveGPU = wx.CheckBox(self.optionsPanel, wx.ID_ANY, "Dedicated GPU") 
+		else:
+			self.exclusiveGPU = None
 		if g_clientType==CLIENT_TVNC:
 			self.rcCheckBox = wx.CheckBox(self.optionsPanel, wx.ID_ANY, "TurboVNC Reverse Connection")
 			self.rcCheckBox.Enable(False)
@@ -452,8 +462,11 @@ class MyGUI(wx.Frame):
 		optionsGBS = wx.GridBagSizer(hgap=0, vgap=0)
 		optionsGBS.Add(resLabel, pos=(0,0), span=(1,1), flag=wx.ALL|wx.EXPAND, border=5)
 		optionsGBS.Add(self.resEntry, pos=(0,1), span=(1,3), flag=wx.ALL|wx.EXPAND, border=5)
+		optionsGBS.Add(self.dedicatedNode, pos=(1,0), span=(1,4), flag=wx.ALL|wx.EXPAND, border=5)
+		self.dedicatedNode.Bind(wx.EVT_CHECKBOX, self.dedicatedNodeClicked)
 		if g_clientType==CLIENT_TVNC:
-			optionsGBS.Add(self.rcCheckBox, pos=(1,0), span=(1,4), flag=wx.ALL|wx.EXPAND, border=5)
+			optionsGBS.Add(self.rcCheckBox, pos=(2,0), span=(1,4), flag=wx.ALL|wx.EXPAND, border=5)
+			optionsGBS.Add(self.exclusiveGPU, pos=(3,0), span=(1,4), flag=wx.ALL|wx.EXPAND, border=5)
 		optionsStaticBoxSizer.Add(optionsGBS, 0, wx.ALL|wx.EXPAND)
 		self.optionsPanel.SetSizer(optionsStaticBoxSizer)
 		#
@@ -494,6 +507,14 @@ class MyGUI(wx.Frame):
 		self.Destroy()
 		sys.exit(0)
 
+	def dedicatedNodeClicked(self, event):
+		if self.exclusiveGPU is not None:
+			# If dedicated node checkbox is enabled, then exclusive GPU makes no sense!
+			if self.dedicatedNode.GetValue()==True:
+				self.exclusiveGPU.Enable(False)
+			else:
+				self.exclusiveGPU.Enable(True)
+
 	def optionsClicked(self, event):
 		if self.optionsCheckBox.GetValue()==True:
 			self.bagSizer.Show(self.optionsPanel, True)
@@ -518,6 +539,13 @@ class MyGUI(wx.Frame):
 	def onConnect(self, event):
 		connectInfo = self.hostInput.GetValue()
 		resolution = self.resEntry.GetValue().lstrip().rstrip()
+		if self.exclusiveGPU is not None:
+			dedicatedGPU = self.exclusiveGPU.GetValue()
+		else:
+			dedicatedGPU = False
+
+		dedicatedNode = self.dedicatedNode.GetValue()
+
 		ciParts = connectInfo.split("@")
 		if (len(ciParts)>2) or ((len(ciParts)==2) and (len(ciParts[1])==0)):
 			self.__showEM("Connection information must be in the format user@host or host", "Invalid Input")
@@ -533,7 +561,7 @@ class MyGUI(wx.Frame):
 		self.panel.Enable(False)
 		self.statusBar.startProgressAnim("Connecting...")
 		# Start worker thread to do the job
-		self.workerThread = WorkerThread(self, lambda: doConnect(hostname, username, resolution, self))
+		self.workerThread = WorkerThread(self, lambda: doConnect(hostname, username, resolution, self, dedicatedGPU, dedicatedNode))
 		self.workerThread.start()
 
 	def onDisconnect(self, event):
