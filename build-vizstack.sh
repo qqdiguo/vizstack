@@ -130,7 +130,8 @@ cp doc/manual/user_guide.pdf /tmp/vizstack-tmp/vizstack-${VIZSTACK_VERSION}/opt/
 cp doc/manual/dev_guide.pdf /tmp/vizstack-tmp/vizstack-${VIZSTACK_VERSION}/opt/vizstack/share/doc/dev_guide.pdf
 
 cp doc/manual/user_guide.pdf /tmp/vizstack-tmp/vizstack-${VIZSTACK_VERSION}/opt/vizstack/share/doc/user_guide.pdf
-cp doc/manual/admin_guide.html /tmp/vizstack-tmp/vizstack-${VIZSTACK_VERSION}/opt/vizstack/share/doc/admin_guide.html
+# Admin guide html lacks images, since they are in SVG format, so not including this for now.
+#cp doc/manual/admin_guide.html /tmp/vizstack-tmp/vizstack-${VIZSTACK_VERSION}/opt/vizstack/share/doc/admin_guide.html
 cp doc/manual/user_guide.html /tmp/vizstack-tmp/vizstack-${VIZSTACK_VERSION}/opt/vizstack/share/doc/user_guide.html
 cp doc/manual/dev_guide.html /tmp/vizstack-tmp/vizstack-${VIZSTACK_VERSION}/opt/vizstack/share/doc/dev_guide.html
 
