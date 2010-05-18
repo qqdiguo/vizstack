@@ -46,14 +46,14 @@ import sys
 
 # Create & configure the first GPU on the system. 
 gpu0 = vsapi.GPU(0)
-gpu0.setScanout(0, "LP2065") # LP2065 connected to port 0
+gpu0.setScanout(0, "HP LP2065") # LP2065 connected to port 0
 # If you need the other output, comment out the following line
 # This will configure the 
 #gpu0.setScanout(1, "LP2065", outputX=1600)
 
 # Create & configure the second GPU on the system. 
 gpu1 = vsapi.GPU(1)
-gpu1.setScanout(0, "LP2065") # LP2065 connected to port 0
+gpu1.setScanout(0, "HP LP2065") # LP2065 connected to port 0
 # If you need the other output, comment out the following line
 # This will configure the 
 #gpu1.setScanout(1, "LP2065", outputX=1600)

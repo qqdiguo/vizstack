@@ -30,7 +30,7 @@ elementFormDefault="qualified" >
 																	</xs:sequence>
 																</xs:complexType>
 															</xs:element>
-															<xs:element name="serverconfig">
+															<xs:element name="server">
 																<xs:complexType>
 																	<xs:sequence>
 																		<xs:element name="hostname" type="xs:string" minOccurs="0" maxOccurs="1" />

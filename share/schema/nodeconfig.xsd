@@ -26,9 +26,27 @@ elementFormDefault="qualified" >
 										<xs:complexType>
 											<xs:sequence>
 												<xs:element name="index" type="xs:nonNegativeInteger" />
-												<xs:element name="bus_id" type="xs:string" />
-												<xs:element name="type" type="xs:string" />
+												<xs:element name="maxShareCount" minOccurs="0" maxOccurs="1" type="xs:nonNegativeInteger" />
+												<xs:element name="sharedServerIndex" minOccurs="0" maxOccurs="1" type="xs:nonNegativeInteger" />
+												<xs:element name="busID" type="xs:string" minOccurs="0" maxOccurs="1" />
+												<xs:element name="model" type="xs:string" />
 												<xs:element name="useScanOut" type="xs:boolean" />
+												<xs:element name="scanout" minOccurs="0" maxOccurs="unbounded" > <!-- Minimum scanouts is 0 to accomodate the QuadroPlex S series GPUs -->
+													<xs:complexType>
+														<xs:sequence>
+															<xs:element name="port_index" type="xs:integer" />
+															<xs:element name="type" >
+																<xs:simpleType>
+																	<xs:restriction base="xs:string">
+																		<xs:enumeration value="DVI" />
+																		<xs:enumeration value="VGA" />
+																	</xs:restriction>
+																</xs:simpleType>
+															</xs:element>
+															<xs:element name="display_device" type="xs:integer" />
+														</xs:sequence>
+													</xs:complexType>
+												</xs:element>
 											</xs:sequence>
 										</xs:complexType>
 									</xs:element>

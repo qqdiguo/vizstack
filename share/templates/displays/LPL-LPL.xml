@@ -8,14 +8,14 @@ According to the EDID, manufacturer is "LPL", and monitor name is "LPL" too !
 
 -->
 
-<displayconfig 
+<display
  xmlns="http://www.hp.com"
  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
  xsi:schemaLocation="http://www.hp.com /opt/vizstack/share/schema/displayconfig.xsd" >
-	<model>DV 2000</model>
-	<vendor>LPL</vendor>
+	<model>HP DV 2000 Laptop Display</model>
 	<input>digital</input>
 	<edid>/opt/vizstack/share/templates/displays/edids/LPL-LPL.bin</edid>
+	<edid_name>LPL</edid_name>
 	<default_mode>1280x800_60</default_mode>
 	<mode>
 		<type>edid</type>
@@ -25,4 +25,4 @@ According to the EDID, manufacturer is "LPL", and monitor name is "LPL" too !
 		<height>800</height>
 		<refresh>60</refresh>
 	</mode>
-</displayconfig>
+</display>

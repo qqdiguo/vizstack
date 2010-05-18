@@ -8,14 +8,14 @@ L1955
 
 -->
 
-<displayconfig 
+<display
  xmlns="http://www.hp.com"
  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
  xsi:schemaLocation="http://www.hp.com /opt/vizstack/share/schema/displayconfig.xsd" >
-	<model>L1955</model>
-	<vendor>HP</vendor>
+	<model>HP L1955</model>
 	<input>analog</input> <!-- The L1955 has a DVI-I and a VGA input. It ships with a VGA cable only, and that's how many end up using it. Hence this choice ! -->
 	<edid>/opt/vizstack/share/templates/displays/edids/HP-L1955.bin</edid>
+	<edid_name>HP L1955</edid_name>
 	<default_mode>1280x1024_60</default_mode>
 	<mode>
 		<type>edid</type>
@@ -104,4 +104,4 @@ L1955
 		<height>480</height>
 		<refresh>60</refresh>
 	</mode>
-</displayconfig>
+</display>

@@ -55,7 +55,7 @@ import string
 
 # Setup the command line parser
 parser = OptionParser(
-usage="usage: %prog <-n num_gpus> [model_file]",
+usage="usage: %prog <-r num_gpus> [model_file]",
 description="""
 Renders a model using Sort Last compositing functionality of OpenSG.
 Results are displayed on the node where this script runs.
@@ -69,7 +69,7 @@ OpenSG - e.g., .obj, .wrl. Note that the directory
 /opt/vizstack/share/demos/OpenSG/data has a few files for ready 
 user.
 """)
-parser.add_option("-n", "--num-gpus", action="store", type="int", dest="num_gpus", help="Use these many GPUs for parallel rendering.")
+parser.add_option("-r", "--num-gpus", action="store", type="int", dest="num_gpus", help="Use these many GPUs for parallel rendering.")
 
 # Parse & validate arguments
 (options, args) = parser.parse_args(sys.argv[1:])
@@ -106,14 +106,21 @@ print
 # on a GPU. The X server's maximum resolution needs to be 
 # fixed at the max size of the client window.
 #
-# Note that  _no_ display devices will be driven in this 
-# configuration.
 maxRes = [1600, 1200]
 for res in resources: # iterate through each GPU, Server combination.
 	gpu = res[0]
 	srv = res[1]
 	scr = vsapi.Screen(0)
-	scr.setFBProperty('resolution',maxRes)
+	if gpu.getAllowNoScanOut():
+		# Configure a virtual framebuffer if possible
+		gpu.clearScanouts()
+		scr.setFBProperty('resolution', maxRes)
+	else:
+		# Configure a dummy display if no display is connected
+		# already. Needed for GeForce GPUs to work.
+		if len(gpu.getScanouts())==0:
+			sc = gpu.getScanoutCaps()
+			gpu.setScanout(0, 'HP LP2065', sc[0][0])
 	scr.setGPU(gpu)
 	srv.addScreen(scr)
 
@@ -138,6 +145,14 @@ alloc.startViz(ra)
 # these
 safeEnv = vsapi.sanitisedEnv()
 
+# Create a mapping from the hostname to the fast network
+# we'll refer to the hostnames in the fast network, and
+# hope OpenSG does the rest
+allNodes = ra.queryResources(vsapi.VizNode())
+fastNetworkMap = {}
+for thisNode in allNodes:
+    fastNetworkMap[thisNode.getHostName()] = thisNode.getProperty('fast_network')
+
 # Run one OpenSG server program on each GPU
 binPrefix = '/opt/vizstack/share/demos/OpenSG/bin/'
 servers = []
@@ -153,9 +168,9 @@ for pipe_details in resources:
 	# and screen number may give good results I think.
 	portNum =  basePort+srv.getIndex()*50+thisScreen.getScreenNumber()
 	hostName = srv.getHostName()
-	thisHost = '%s:%d'%(hostName, portNum)
+	thisHost = '%s:%d'%(fastNetworkMap[hostName], portNum)
 	hosts.append(thisHost)
-	cmd = "%s/ClusterServer -geometry %dx%d+0+0 -w %s"%(binPrefix, maxRes[0], maxRes[1], thisHost)
+	cmd = ["%s/ClusterServer"%(binPrefix), "-geometry", "%dx%d+0+0"%(maxRes[0],maxRes[1]), "-w", "%s"%(thisHost) ]
 	#print cmd
 	# Start the server
 	servers.append(thisScreen.run(cmd, launcherEnv=safeEnv))

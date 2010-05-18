@@ -46,25 +46,33 @@ OPTIONS
 *-m DISPLAY_MODE, --display-mode=DISPLAY_MODE*::
     The resolution to run the X server at.
 
-*-s, --stereo*::
-     Turns on stereographic display, if present in the display devices.
-
 *-r, --render-servers=NUM_RENDER_GPUS*::
      The number of render nodes to use.
 
 *-p, --port=SERVER_PORT*::
-     The port on which the server connects to the client.
+     The port on which to start the ParaView server.
 
-*--server-only*::
-	Only starts the servers, one can connect using a client 
-	running on the local desktop.
+*-l, --local*::
+     By default, this scripts starts the ParaView server, but no
+     client. If you want the script to run the ParaView client on
+     the local desktop, then use this option.
+
+*-c, --connect-to=CLIENT*::
+     Connect to a listening Paraview client. Use this if outgoing 
+     firewall connections are allowed.
+
+*--mpilib=MPILIB*::
+     The MPI library to use. Use the library that the ParaView server 
+     is compiled with. Valid values are 'hpmpi', 'openmpi' and 'mpich'.
+     Defaults to 'openmpi'.
 
 *--no-framelock*::
-        If framelock is possible, then the script will try to
-	enable framelock. If your framelock chain or tiled
-        display is not setup properly for framelock, then this
-        will fail. Use this if you want to just run the
-        desktop without attempting framelock.
+     VizStack sets up framelock if this is enabled in the configuration of 
+     the used tiled display.  Framelock provides hardware synchronization of 
+     all the displays in the Tiled Display. If your framelock chain or tiled 
+     display is not setup properly for framelock, then ParaView will not be started. 
+     Use this option if framelock setup fails, but you want to use the tiled 
+     display without framelock.
 
 EXIT STATUS
 -----------
@@ -78,29 +86,26 @@ EXIT STATUS
 EXAMPLES
 --------
 
+To run ParaView in distributed rendering mode using 4 GPUs,
+
+*# viz-paraview -r 4*
+
+This will start a ParaView server with 4 GPUs. You will need to 
+connect to the ParaView server using a ParaView client from your
+desktop.
+
 To run ParaView in tiled display mode and the assuming the name of
 the defined tiled display is 'front-wall'.
 
 *# viz-paraview -t front-wall*
 
-to start the server with a display mode of 1280x1024.
+To start the server with a display mode of 1280x1024.
 
 *# viz-paraview -t front-wall -m 1280x1024*
 
-To run ParaView in distributed rendering mode using 4 GPUs,
+To run ParaView with a local GUI :
 
-*# viz-paraview -r 4 -m 1600x1200*
-
-note that -m is compulsory in distributed rendering mode.
-To run ParaView in server only mode, where no local GUI
-is started and the user connects to the server by starting
-the client on his local desktop
-
-*# viz-paraview -t front-wall --server-only*
-
-Note that in this mode, the firewall port needs to opened
-on the server side, so that the client can connect.
-
+*# viz-paraview -t front-wall --local*
 
 AUTHOR
 ------

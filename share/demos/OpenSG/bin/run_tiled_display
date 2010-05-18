@@ -118,13 +118,21 @@ screenLayout = rg.getHandlerObject().getLayoutMatrix()
 # environment variable. This makes the animation look
 # smoother. Without this, the user may perceive some
 # tearing.
-syncToVBlank = "/usr/bin/env __GL_SYNC_TO_VBLANK=1"
+syncToVBlank = ["/usr/bin/env", "__GL_SYNC_TO_VBLANK=1"]
 
 # Create a modified environment for the 
 # OpenSG servers to run. Currently, this ensures that
 # VirtualGL's librrfaker.so LD_PRELOAD does not affect
 # these
 safeEnv = vsapi.sanitisedEnv()
+
+# Create a mapping from the hostname to the fast network
+# we'll refer to the hostnames in the fast network, and
+# hope OpenSG does the rest
+allNodes = ra.queryResources(vsapi.VizNode())
+fastNetworkMap = {}
+for thisNode in allNodes:
+    fastNetworkMap[thisNode.getHostName()] = thisNode.getProperty('fast_network')
 
 # Run the OpenSG server programs on each tile
 binPrefix = '/opt/vizstack/share/demos/OpenSG/bin/'
@@ -135,17 +143,17 @@ basePort = 30000
 for y in range(rows-1,-1,-1):
 	for x in range(cols):
 		hostIndex = y*num_tiles[1]+x
-		thisScreen = screenLayout[y][x]
+		thisScreen = screenLayout[y][x]['screen']
 		srv = thisScreen.getServer()
 		# Choose a port number to avoid clash with other
 		# running programs. Tying the port number to X server number
 		# and screen number may give good results I think.
 		portNum =  basePort+srv.getIndex()*50+thisScreen.getScreenNumber()
 		hostName = srv.getHostName()
-		thisHost = '%s:%d'%(hostName, portNum)
+		thisHost = '%s:%d'%(fastNetworkMap[hostName], portNum)
 		dims = thisScreen.getFBProperty('resolution')
 		hosts.append(thisHost)
-		cmd = "%s %s/ClusterServer -geometry %dx%d+0+0 -w %s"%(syncToVBlank, binPrefix, dims[0], dims[1], thisHost)
+		cmd = syncToVBlank + ["%s/ClusterServer"%(binPrefix), "-geometry" "%dx%d+0+0"%(dims[0],dims[1]), "-w", "%s"%(thisHost) ]
 		#print cmd
 		# Start the server
 		servers.append(thisScreen.run(cmd,launcherEnv=safeEnv))

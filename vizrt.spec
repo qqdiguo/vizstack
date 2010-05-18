@@ -1,6 +1,6 @@
 Summary: VizStack Remote Access Tools
 Name: vizrt
-Version: 1.0
+Version: 1.1
 Release: 2
 License: GPLV2
 Group: Applications/Internet
@@ -32,7 +32,19 @@ rm -rf $RPM_BUILD_ROOT
 
 
 %changelog
-* Tue Feb 23 2010 Sunil Shinde <shreekumar@hp.com>
+* Mon May 17 2010 Shree Kumar <shreekumar@hp.com>
+- Bumped up version string to 1.1-2, Changes being
+  - Added GPL license page
+  - Added an option to allocate an exclusive node
+
+* Fri Mar 26 2010 Shree Kumar <shreekumar@hp.com>
+- Bumped up version string to 1.1-1, keeping in sync with VizStack
+  main RPM.
+
+* Tue Feb 23 2010 Shree Kumar <shreekumar@hp.com>
+- Bumped up the version string to 1.1, for GPU sharing release
+
+* Tue Feb 23 2010 Shree Kumar <shreekumar@hp.com>
 - Bumped up the version string to 1.0-2, for new release
 
 * Thu Nov 05 2009 Sunil Shinde <sunil.shinde@hp.com>

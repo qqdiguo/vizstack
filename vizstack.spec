@@ -1,6 +1,6 @@
 Summary: Software to convert one/more machines with GPUs into a sharable, multi-user, multi-session visualization resource.
 Name: vizstack
-Version: 1.0
+Version: 1.1
 Release: 2
 License: GPLV2
 Group: Development/Tools
@@ -25,6 +25,12 @@ For ease of use, VizStack provides integrations with HP Remote Graphics Software
 rm -rf $RPM_BUILD_ROOT
 mkdir -p $RPM_BUILD_ROOT
 cp -r opt usr etc lib64 $RPM_BUILD_ROOT
+# Ensure the suid bit is set on the needed binaries
+# For some reason I'm unable to achieve this during
+# packaging
+chmod +s $RPM_BUILD_ROOT/usr/X11R6/bin/vs-X
+chmod +s $RPM_BUILD_ROOT/opt/vizstack/bin/vs-Xkill
+chmod +s $RPM_BUILD_ROOT/opt/vizstack/bin/vs-GDMlauncher
 
 %clean
 rm -rf $RPM_BUILD_ROOT
@@ -45,15 +51,53 @@ rm -rf $RPM_BUILD_ROOT
 /etc/profile.d/vizstack.sh
 /lib64/security/pam_vizstack_rgs_setuser.so
 %doc
-/opt/vizstack/man/man1/*
-
-%post
-chmod +s /usr/X11R6/bin/vs-X
-chmod +s /opt/vizstack/bin/vs-GDMlauncher
-chmod +s /opt/vizstack/bin/vs-Xkill
-mkdir -p /var/run/vizstack
+/opt/vizstack/man/man1/
 
 %changelog
+* Mon May 17 2010 Shree Kumar <shreekumar@hp.com>
+- Updated version number to 1.1-2
+   - Many bug fixes
+     - Fixed allocation of whole nodes, option added
+       to viz-rgs, viz-tvnc and remote access tools.
+   - Documentation split into admin guide, user guide
+     and dev guide
+   - Examples added for equalizer, SPECViewPerf and CUDA.
+     These are mentioned in the dev guide.
+   - Support for Bezels.
+
+* Fri Mar 26 2010 Shree Kumar <shreekumar@hp.com>
+- Updated version number to 1.1-1
+   - Many bug fixes
+   - Many improvements
+     - Better algorithm for detecting GPUs and 
+       GPU scanouts
+     - GPUs now have an additional "stereo" capability.
+       This allows allocation of GPUs which support 
+       stereo.
+     - Node specific weights to tweak order of allocation
+       between nodes
+     - vs-configure-system generates templates for unknown
+       GPUs and displays.
+     - vs-generate-xconfig can generate config file given
+       X server spec. It also handles the 'EDID bytes' tag 
+       properly
+
+* Tue Feb 23 2010 Shree Kumar <shreekumar@hp.com>
+- Updated version string to 1.1 for GPU sharing
+   - Implemented GPU sharing. Changes touch most
+     part of VizStack
+   - Add option -S, -i, -x to configuration commands.
+     These configure GPU sharing.
+   - viz-tvnc and viz-vgl scripts allocate shared
+     GPUs by default. A new option, -x is available
+     to allocate exclusive GPUs.
+   - File format of /etc/vizstack/node_config.xml has
+     been changed. If you have an earlier version of
+     VizStack installed, please run the configure
+     script again; else the SSM won't start.
+   - SSM uses the python logging package. Logging is 
+     controlled by the file /etc/vizstack/ssm-logging.conf
+
 * Tue Feb 23 2010 Shree Kumar <shreekumar@hp.com>
 - Updated version string to 1.0-2 for new release
    - Modified "-m" option in configuration commands

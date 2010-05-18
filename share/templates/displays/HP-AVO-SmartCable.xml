@@ -7,14 +7,14 @@ to the KVM.
 
 -->
 
-<displayconfig 
+<display
  xmlns="http://www.hp.com"
  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
  xsi:schemaLocation="http://www.hp.com /opt/vizstack/share/schema/displayconfig.xsd" >
-	<model>HP KVM Dongle(AVO_Smart_Cable)</model>
-	<vendor>HP</vendor>
+	<model>AVO Smart Cable</model>
 	<input>analog</input>
 	<edid>/opt/vizstack/share/templates/displays/edids/HP-AVO-SmartCable.bin</edid>
+	<edid_name>AVO Smart Cable</edid_name>
 	<default_mode>1024x768_60</default_mode>
 	<mode>
 		<type>edid</type> 
@@ -83,4 +83,4 @@ to the KVM.
 		<height>864</height>
 		<refresh>60</refresh>
 	</mode>
-</displayconfig>
+</display>

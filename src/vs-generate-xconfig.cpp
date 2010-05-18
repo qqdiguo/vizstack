@@ -27,7 +27,7 @@
 
 // Xerces includes
 #include "vsdomparser.hpp"
-
+#include "vscommon.h"
 #include <string.h>
 #include <stdlib.h>
 #include <algorithm>
@@ -36,11 +36,12 @@
 
 #include <map>
 #include <vector>
+#include <string>
 
-XERCES_CPP_NAMESPACE_USE
 using namespace std;
 
 #include <glob.h>
+#include <assert.h>
 
 // Some default values
 #define MIN_HSYNC "30.0"
@@ -49,6 +50,10 @@ using namespace std;
 #define MAX_VREFRESH "150.0"
 
 bool g_debugPrints=false;
+
+int g_ssmSocket=-1;
+
+vector<string> g_templatedir;
 
 void Glob(std::string pathspec, std::vector<std::string>& matchingEntries)
 {
@@ -124,12 +129,11 @@ struct DisplayMode
 
 struct DisplayTemplate
 {
-	string name; // name of the device model - e.g., "Quadro FX 5600"
-	string vendor; // name of the vendor - e.g. "nVidia"
+	string name; // name of the device model - e.g., "HP LP2065"
 	string input; // Default input type - analog or digital.
 	bool hasEdid; // Does this display have an EDID ?
 	string edidFile; // It yes, it's probably in this file.
-	char edidBytes[EDID_BLOCK_SIZE*MAX_EDID_BLOCKS]; // If the filename is empty, then it's in this file
+	unsigned char edidBytes[EDID_BLOCK_SIZE*MAX_EDID_BLOCKS]; // If the filename is empty, then it's in this file
 	unsigned int numEdidBytes; // and these many bytes are valid
 	string hsyncRange[2], vrefreshRange[2];
 	vector<DisplayMode> displayModes;
@@ -179,9 +183,8 @@ struct GPUInfo // tracks usage of important GPU resources
 	string busID;
 	string modelName;
 	string vendorName;
-	string pciDeviceId;
-	string pciVendorId;
 	bool allowScanOut;
+	bool allowNoScanOut;
 	unsigned int usageCount;
 	vector < vector<string> > portOutputCaps;
 	vector < unsigned int > portUsageCount;
@@ -421,7 +424,10 @@ void generateXConfig(
 		fprintf(outFile, "\tDriver \"nvidia\"\n");
 		fprintf(outFile, "\tVendorName \"%s\"\n", thisGPU.vendorName.c_str());
 		fprintf(outFile, "\tBoardName \"%s\"\n", thisGPU.modelName.c_str());
-		fprintf(outFile, "\tBusID \"%s\"\n", thisGPU.busID.c_str());
+		if (thisGPU.busID.size()>0)
+		{
+			fprintf(outFile, "\tBusID \"%s\"\n", thisGPU.busID.c_str());
+		}
 		fprintf(outFile, "\tOption \"ProbeAllGpus\" \"False\"\n");
 
 		// TODO: I've found bugs with versions of drivers when using this.
@@ -472,7 +478,7 @@ void generateXConfig(
 				// This simply cannot happen !
 				// the display device is supposed to be validated first -- so we shouldn't land in this situation
 				// ever !
-				XERCES_STD_QUALIFIER cerr << "Unknown display device '" << scanout.device <<"'" << XERCES_STD_QUALIFIER endl;
+				std::cerr << "Unknown display device '" << scanout.device <<"'" << std::endl;
 				return;
 			}
 
@@ -590,6 +596,7 @@ void generateXConfig(
 			case PASSIVE_STEREO:
 				fprintf(outFile, "\tOption \"Stereo\" \"4\"\n");
 				useStereo = true;
+				break;
 			case STEREO_SEEREAL_DFP:
 				fprintf(outFile, "\tOption \"Stereo\" \"5\"\n");
 				useStereo = true;
@@ -603,7 +610,7 @@ void generateXConfig(
 		bool sliMosaicMode = false;
 		if (fb.sliBridge.size()==1)
 		{
-			char *sliMode=0;
+			const char *sliMode=0;
 			switch(fb.sliBridge[0].mode)
 			{
 				default:
@@ -682,7 +689,7 @@ void generateXConfig(
 						// This simply cannot happen !
 						// the display device is supposed to be validated first -- so we shouldn't land in this situation
 						// ever !
-						XERCES_STD_QUALIFIER cerr << "Unknown display device '" << scanout.device <<"'" << XERCES_STD_QUALIFIER endl;
+						std::cerr << "Unknown display device '" << scanout.device <<"'" << std::endl;
 						return;
 					}
 
@@ -725,14 +732,19 @@ void generateXConfig(
 
 					// Add the metamode for this scanout
 					char mm[256];
+					char panningDomain[256];
+//					if((scanout.width==dm.width) && (scanout.height==dm.height))
+//						strcpy(panningDomain,"");
+//					else
+					sprintf(panningDomain, "@%dx%d ", scanout.width, scanout.height);
 					if(!sliMosaicMode)
 					{
-						sprintf(mm, "%s: %s @%dx%d +%d+%d", dd, usedMode.c_str(), scanout.width, scanout.height, scanout.x, scanout.y);
+						sprintf(mm, "%s: %s %s+%d+%d", dd, usedMode.c_str(), panningDomain, scanout.x, scanout.y);
 					}
 					else
 					{
 						// Don't include the device when generating metamodes for SLI mosaic mode.
-						sprintf(mm, "%s @%dx%d +%d+%d", usedMode.c_str(), scanout.width, scanout.height, scanout.x, scanout.y);
+						sprintf(mm, "%s %s +%d+%d", usedMode.c_str(), panningDomain, scanout.x, scanout.y);
 					}
 					if(metamodes.size()==0)
 						metamodes = mm ;
@@ -889,7 +901,7 @@ void generateXConfig(
 }
 
 bool extractXMLData(
-	DOMNode *root, 
+	VSDOMNode root, 
 	bool& combineFB, 
 	vector<Framebuffer>& framebuffers,
 	vector<GPUInfo>& gpuInfo,
@@ -905,7 +917,7 @@ bool extractXMLData(
 	vector<SLI>& sliBridges,
 	vector<SLI>& usedSLIBridge)
 {
-	DOMNode *child;
+	VSDOMNode child;
 	vector<unsigned int> usedDisplayIndex;
 
 	bool configUsesStereo = false;
@@ -917,55 +929,55 @@ bool extractXMLData(
 	usedMice.clear();
 	usedSLIBridge.clear();
 
-	if(!root)
+	if(root.isEmpty())
 	{
 		cerr << "No root node passed ! Nothing to do" << endl;
 		return false;
 	}
 
 	// Check root node
-	if(transcode2string(root->getNodeName())!="serverconfig")
+	if((root.getNodeName())!="server")
 	{
-		cerr << "Improper Root node '" << transcode2string(root->getNodeName()) <<"'" << endl;
+		cerr << "Improper Root node '" << root.getNodeName() <<"'" << endl;
 		return false;
 	}
 
-	vector<DOMNode*> cmdArgNodes = getChildNodes(root, "x_cmdline_arg");
+	vector<VSDOMNode> cmdArgNodes = root.getChildNodes("x_cmdline_arg");
 	for(unsigned int i=0;i<cmdArgNodes.size();i++)
 	{
 		OptVal ov;
-		ov.name = getValueAsString(getChildNode(cmdArgNodes[i],"name"));
-		DOMNode *valNode = getChildNode(cmdArgNodes[i],"value");
-		if(valNode)
-			ov.value = getValueAsString(valNode);
+		ov.name = cmdArgNodes[i].getChildNode("name").getValueAsString();
+		VSDOMNode valNode = cmdArgNodes[i].getChildNode("value");
+		if(!valNode.isEmpty())
+			ov.value = valNode.getValueAsString();
 		
 		cmdArgVal.push_back(ov);
 	}
 
 	// Get the list of X modules to load
-	vector<DOMNode*> moduleNodes = getChildNodes(root, "x_module");
+	vector<VSDOMNode> moduleNodes = root.getChildNodes("x_module");
 	for(unsigned int i=0;i<moduleNodes.size();i++)
 	{
-		string modName = getValueAsString(moduleNodes[i]);
+		string modName = moduleNodes[i].getValueAsString();
 		modulesToLoad.push_back(modName);
 	}
 
 	// Get the list of extension section options, and their values
-	vector<DOMNode*> optvalNodes = getChildNodes(root, "x_extension_section_option");
+	vector<VSDOMNode> optvalNodes = root.getChildNodes("x_extension_section_option");
 	for(unsigned int i=0;i<optvalNodes.size();i++)
 	{
 		OptVal ov;
-		ov.name = getValueAsString(getChildNode(optvalNodes[i], "name"));
-		ov.value = getValueAsString(getChildNode(optvalNodes[i], "value"));
+		ov.name = optvalNodes[i].getChildNode("name").getValueAsString();
+		ov.value = optvalNodes[i].getChildNode("value").getValueAsString();
 		extensionSectionOptions.push_back(ov);
 	}
 
 	// Get the input devices being used
-	vector<DOMNode*> keyboardNodes = getChildNodes(root, "keyboard");
+	vector<VSDOMNode> keyboardNodes = root.getChildNodes("keyboard");
 	for(unsigned int i=0;i<keyboardNodes.size();i++)
 	{
-		DOMNode* keyboardNode = keyboardNodes[i];
-		unsigned int kbdIndex = getValueAsInt(getChildNode(keyboardNode, "index"));
+		VSDOMNode keyboardNode = keyboardNodes[i];
+		unsigned int kbdIndex = keyboardNode.getChildNode("index").getValueAsInt();
 		if (kbdIndex>=validKeyboards.size())
 		{
 			cerr << "Out-of-range keyboard index "<<kbdIndex << " used." << endl;
@@ -983,11 +995,11 @@ bool extractXMLData(
 		}
 	}
 
-	vector <DOMNode*> mouseNodes = getChildNodes(root, "mouse");
+	vector <VSDOMNode> mouseNodes = root.getChildNodes( "mouse");
 	for(unsigned int i=0;i<mouseNodes.size();i++)
 	{
-		DOMNode* mouseNode = mouseNodes[i];
-		unsigned int mouseIndex = getValueAsInt(getChildNode(mouseNode, "index"));
+		VSDOMNode mouseNode = mouseNodes[i];
+		unsigned int mouseIndex = mouseNode.getChildNode("index").getValueAsInt();
 		if (mouseIndex>=validMice.size())
 		{
 			cerr << "Out-of-range mouse index "<<mouseIndex << " used." << endl;
@@ -1005,7 +1017,7 @@ bool extractXMLData(
 		}
 	}
 
-	vector<DOMNode*> framebufferNodes = getChildNodes(root, "framebuffer");
+	vector<VSDOMNode> framebufferNodes = root.getChildNodes("framebuffer");
 	if(framebufferNodes.size()==0)
 	{
 		cerr << "X server has no framebuffers(Screens) associated with it. This is not a valid X server configuration." << endl;
@@ -1013,7 +1025,7 @@ bool extractXMLData(
 	}
 	for(unsigned int i=0;i<framebufferNodes.size();i++)
 	{
-		DOMNode *fbNode = framebufferNodes[i];
+		VSDOMNode fbNode = framebufferNodes[i];
 
 		Framebuffer fb;
 
@@ -1026,38 +1038,38 @@ bool extractXMLData(
 		fb.rotation = ROTATE_NONE;
 
 		// FIXME -- We REALLY need to ensure that the framebuffer (i.e. screen) numbers are in sequences ??
-		fb.index = getValueAsInt(getChildNode(fbNode, "index"));
+		fb.index = fbNode.getChildNode("index").getValueAsInt();
 
-		DOMNode *propertyNode = getChildNode(fbNode, "properties");
-		if(propertyNode)
+		VSDOMNode propertyNode = fbNode.getChildNode("properties");
+		if(!propertyNode.isEmpty())
 		{
-			DOMNode *propNode;
+			VSDOMNode propNode;
 
 			// Get the position relative to the other framebuffers
-			propNode = getChildNode(propertyNode, "x");
-			if(propNode)
-				fb.posX = getValueAsInt(propNode);
+			propNode = propertyNode.getChildNode("x");
+			if(!propNode.isEmpty())
+				fb.posX = propNode.getValueAsInt();
 
-			propNode = getChildNode(propertyNode, "y");
-			if(propNode)
-				fb.posY = getValueAsInt(propNode);
+			propNode = propertyNode.getChildNode( "y");
+			if(!propNode.isEmpty())
+				fb.posY = propNode.getValueAsInt();
 
-			propNode = getChildNode(propertyNode, "width");
-			if(propNode)
-				fb.width = getValueAsInt(propNode);
+			propNode = propertyNode.getChildNode("width");
+			if(!propNode.isEmpty())
+				fb.width = propNode.getValueAsInt();
 
-			propNode = getChildNode(propertyNode, "height");
-			if(propNode)
-				fb.height = getValueAsInt(propNode);
+			propNode = propertyNode.getChildNode( "height");
+			if(!propNode.isEmpty())
+				fb.height = propNode.getValueAsInt();
 
-			propNode = getChildNode(propertyNode, "bpp");
-			if(propNode)
-				fb.bpp = getValueAsInt(propNode);
+			propNode = propertyNode.getChildNode( "bpp");
+			if(!propNode.isEmpty())
+				fb.bpp = propNode.getValueAsInt();
 
-			propNode = getChildNode(propertyNode, "stereo");
-			if(propNode)
+			propNode = propertyNode.getChildNode( "stereo");
+			if(!propNode.isEmpty())
 			{
-				string val = getValueAsString(propNode);
+				string val = propNode.getValueAsString();
 				if(val=="none")
 					fb.stereoMode = STEREO_NONE;
 				else
@@ -1081,10 +1093,10 @@ bool extractXMLData(
 				}
 			}
 
-			propNode = getChildNode(propertyNode, "rotate");
-			if(propNode)
+			propNode = propertyNode.getChildNode( "rotate");
+			if(!propNode.isEmpty())
 			{
-				string val = getValueAsString(propNode);
+				string val = propNode.getValueAsString();
 				if(val=="none")
 					fb.rotation = ROTATE_NONE;
 				else
@@ -1106,17 +1118,17 @@ bool extractXMLData(
 			}
 		}
 
-		vector<DOMNode*> gpuNodes = getChildNodes(fbNode, "gpu");
+		vector<VSDOMNode> gpuNodes = fbNode.getChildNodes("gpu");
 		bool hasScanout = false;
 		for(unsigned int k=0;k<gpuNodes.size(); k++)
 		{
-			DOMNode *gpuNode = gpuNodes[k];
+			VSDOMNode gpuNode = gpuNodes[k];
 			FBGPUConfig gpu;
 			//
 			// FIXME: should we take the rest of the GPU properties
 			// i.e. type, bus ID and match them after index ?
 			// 
-			gpu.gpuIndex = getValueAsInt(getChildNode(gpuNode,"index"));
+			gpu.gpuIndex = gpuNode.getChildNode("index").getValueAsInt();
 
 			// check validity of GPU
 			if (gpu.gpuIndex>=gpuInfo.size())
@@ -1128,7 +1140,7 @@ bool extractXMLData(
 			GPUInfo &thisGPU = gpuInfo[gpu.gpuIndex];
 			thisGPU.usageCount++; //increment usage count for this GPU
 
-			vector<DOMNode*> scanoutList = getChildNodes(gpuNode, "scanout");
+			vector<VSDOMNode> scanoutList = gpuNode.getChildNodes("scanout");
 
 			if (scanoutList.size()==0)
 			{
@@ -1161,8 +1173,8 @@ bool extractXMLData(
 
 			for(unsigned int j=0;j<scanoutList.size();j++)
 			{
-				DOMNode *thisScanout = scanoutList[j];
-				unsigned int portIndex = getValueAsInt(getChildNode(thisScanout,"port_index"));
+				VSDOMNode thisScanout = scanoutList[j];
+				unsigned int portIndex = thisScanout.getChildNode("port_index").getValueAsInt();
 
 				if(portIndex>=thisGPU.portUsageCount.size())
 				{
@@ -1177,7 +1189,7 @@ bool extractXMLData(
 					return false;
 				}
 
-				string displayDevice = getValueAsString(getChildNode(thisScanout, "display_device"));
+				string displayDevice = thisScanout.getChildNode("display_device").getValueAsString();
 
 				// get information for this display device
 				DisplayTemplate dt;
@@ -1195,12 +1207,12 @@ bool extractXMLData(
 				}
 
 				// Get the type of display device
-				DOMNode* scanoutPortTypeNode = getChildNode(thisScanout,"type");
+				VSDOMNode scanoutPortTypeNode = thisScanout.getChildNode("type");
 				string portType;
-				if(scanoutPortTypeNode)
+				if(!scanoutPortTypeNode.isEmpty())
 				{
 					// get the type from the input
-					portType = getValueAsString(scanoutPortTypeNode);
+					portType = scanoutPortTypeNode.getValueAsString();
 					// NOTE: we don't validate this, since it's supposed to be have come here after
 					// passing the schema check!
 				}
@@ -1214,10 +1226,10 @@ bool extractXMLData(
 				// get the display mode requested. If a mode is not requested, then
 				// use the default of the display device
 				string mode;
-				DOMNode *modeNode =getChildNode(thisScanout, "mode");
-				if(modeNode)
+				VSDOMNode modeNode = thisScanout.getChildNode("mode");
+				if(!modeNode.isEmpty())
 				{
-					mode = getValueAsString(modeNode);
+					mode = modeNode.getValueAsString();
 				}
 				else
 				{
@@ -1245,20 +1257,20 @@ bool extractXMLData(
 				}
 
 				unsigned int areaX, areaY, areaWidth, areaHeight;
-				DOMNode *areaNode = getChildNode(thisScanout, "area");
+				VSDOMNode areaNode = thisScanout.getChildNode( "area");
 				// if a scanout area is defined, then use that.
-				if(areaNode)
+				if(!areaNode.isEmpty())
 				{
-					areaX=getValueAsInt(getChildNode(areaNode, "x"));
-					areaY=getValueAsInt(getChildNode(areaNode, "y"));
-					DOMNode *propNode = getChildNode(areaNode, "width");
-					if(propNode)
-						areaWidth = getValueAsInt(propNode);
+					areaX=areaNode.getChildNode("x").getValueAsInt();
+					areaY=areaNode.getChildNode("y").getValueAsInt();
+					VSDOMNode propNode = areaNode.getChildNode("width");
+					if(!propNode.isEmpty())
+						areaWidth = propNode.getValueAsInt();
 					else
 						areaWidth = dm.width;
-					propNode = getChildNode(areaNode, "height");
-					if(propNode)
-						areaHeight = getValueAsInt(propNode);
+					propNode = areaNode.getChildNode("height");
+					if(!propNode.isEmpty())
+						areaHeight = propNode.getValueAsInt();
 					else
 						areaHeight = dm.height;
 
@@ -1532,8 +1544,8 @@ bool extractXMLData(
 		}
 
 		// get the combiner
-		DOMNode *combinerNode = getChildNode(fbNode, "gpu_combiner");
-		if(combinerNode==0)
+		VSDOMNode combinerNode = fbNode.getChildNode( "gpu_combiner");
+		if(combinerNode.isEmpty())
 		{
 			if(fb.gpuConfig.size()>1)
 			{
@@ -1543,15 +1555,15 @@ bool extractXMLData(
 		}
 		else
 		{
-			DOMNode *sliNode = getChildNode(combinerNode, "sli");
-			if(!sliNode)
+			VSDOMNode sliNode = combinerNode.getChildNode( "sli");
+			if(sliNode.isEmpty())
 			{
 				cerr << "Bad XML. gpu_combiner used without sli." << endl;
 				return false;
 			}
 
 			// get the right SLI object looking up using the index
-			unsigned int sliIndex = getValueAsInt(getChildNode(sliNode,"index"));
+			unsigned int sliIndex = sliNode.getChildNode("index").getValueAsInt();
 			if ((sliIndex<0) || (sliIndex>=sliBridges.size()))
 			{
 				cerr << "Bad SLI bridge reference." << endl;
@@ -1609,12 +1621,12 @@ bool extractXMLData(
 			SLI &thisSLI = sliBridges[sliIndex];
 
 			// convert SLI mode from string to enum
-			DOMNode *sliMode = getChildNode(sliNode, "mode");
-			if(!sliMode)
+			VSDOMNode sliMode = sliNode.getChildNode("mode");
+			if(sliMode.isEmpty())
 				thisSLI.mode = SLI_AUTO;
 			else
 			{
-				string val = getValueAsString(sliMode);
+				string val = sliMode.getValueAsString();
 				if(val=="auto")
 					thisSLI.mode = SLI_AUTO;
 				else
@@ -1794,14 +1806,14 @@ bool extractXMLData(
 		framebuffers.push_back(fb);
 	}
 
-	DOMNode *combineFramebuffers = getChildNode(root, "combine_framebuffers");
-	if(!combineFramebuffers)
+	VSDOMNode combineFramebuffers = root.getChildNode("combine_framebuffers");
+	if(combineFramebuffers.isEmpty())
 	{
 		combineFB = false;
 	}
 	else
 	{
-		string val=getValueAsString(combineFramebuffers);
+		string val=combineFramebuffers.getValueAsString();
 		if((val=="1") || (val=="true"))
 			combineFB=true;
 		else
@@ -1915,7 +1927,17 @@ bool setMouse(vector<Mouse>& mouseTemplates, Mouse &mouse)
 	return false;
 }
 
-
+void getTemplateFiles(string restype, vector<string> &templateFiles)
+{
+	for(unsigned int i=0;i<g_templatedir.size();i++)
+	{
+		string path = g_templatedir[i];
+		path += "/";
+		path += restype;
+		path += "/*.xml";
+		Glob(path.c_str(), templateFiles);
+	} 
+}
 
 void getKeyboardTemplates(vector<Keyboard>& keyboardTemplates)
 {
@@ -1924,48 +1946,68 @@ void getKeyboardTemplates(vector<Keyboard>& keyboardTemplates)
 	VSDOMParser *keyboardParser = new VSDOMParser;
 
 	vector<string> kbdFiles;
-	Glob("/opt/vizstack/share/templates/keyboard/*.xml", kbdFiles);
-	Glob("/etc/vizstack/templates/keyboard/*.xml", kbdFiles);
+	vector<VSDOMNode> nodes;
+	int numNodes;
+
+	if(g_standalone)
+	{
+		getTemplateFiles("keyboard", kbdFiles);
+		numNodes = kbdFiles.size();
+	}
+	else
+	{
+		if(!getTemplates(nodes, "keyboard", g_ssmSocket))
+		{
+			return;
+		}
+		numNodes = nodes.size();
+	}
 
 	if(g_debugPrints)
 		cout << "Loading keyboard templates" << endl;
 	
-	for(unsigned int i=0;i<kbdFiles.size();i++)
+	for(unsigned int i=0;i<numNodes;i++)
 	{
-		if(g_debugPrints)
-			cout << "Loading "<< kbdFiles[i] << " .. " << endl;
-		errorHandler.resetErrors();
-		DOMDocument *kbdDoc = keyboardParser->Parse(kbdFiles[i].c_str(), true, errorHandler);
-
-		// Print out warning and error messages
-		vector<string> msgs;
-		errorHandler.getMessages (msgs);
-		for (unsigned int j = 0; j < msgs.size (); j++)
-			cout << msgs[j] << endl;
-
-		if(kbdDoc)
+		VSDOMNode rootNode;
+		if(g_standalone)
 		{
+			if(g_debugPrints)
+				cout << "Loading "<< kbdFiles[i] << " .. " << endl;
+			errorHandler.resetErrors();
+			VSDOMDoc *kbdDoc = keyboardParser->ParseFile(kbdFiles[i].c_str(), errorHandler);
 
-			bool noErrors = true;
-
-			Keyboard kbd;
-			DOMNode* rootNode = (DOMNode*)kbdDoc->getDocumentElement();
-
-			kbd.index = 0;
-			kbd.type = getValueAsString(getChildNode(rootNode, "name"));
-			kbd.driver = getValueAsString(getChildNode(rootNode, "driver"));
-
-			vector<DOMNode*> optionNodes = getChildNodes(rootNode, "option");
-			for(unsigned int j=0;j<optionNodes.size();j++)
-			{
-				OptVal ov;
-				ov.name  = getValueAsString(getChildNode(optionNodes[j], "name"));
-				ov.value  = getValueAsString(getChildNode(optionNodes[j], "value"));
-				kbd.optval.push_back(ov);
-			}
-
-			setKeyboard(keyboardTemplates, kbd);
+			// Print out warning and error messages
+			vector<string> msgs;
+			errorHandler.getMessages (msgs);
+			for (unsigned int j = 0; j < msgs.size (); j++)
+				cout << msgs[j] << endl;
+			if(!kbdDoc)
+				continue;
+			rootNode = kbdDoc->getRootNode();
 		}
+		else
+		{
+			rootNode = nodes[i];
+		}
+
+		bool noErrors = true;
+
+		Keyboard kbd;
+
+		kbd.index = 0;
+		kbd.type = rootNode.getChildNode("type").getValueAsString();
+		kbd.driver = rootNode.getChildNode("driver").getValueAsString();
+
+		vector<VSDOMNode> optionNodes = rootNode.getChildNodes("option");
+		for(unsigned int j=0;j<optionNodes.size();j++)
+		{
+			OptVal ov;
+			ov.name  = optionNodes[j].getChildNode("name").getValueAsString();
+			ov.value  = optionNodes[j].getChildNode("value").getValueAsString();
+			kbd.optval.push_back(ov);
+		}
+
+		setKeyboard(keyboardTemplates, kbd);
 	}
 }
 
@@ -1976,48 +2018,69 @@ void getMouseTemplates(vector<Mouse>& mouseTemplates)
 	VSDOMParser *mouseParser = new VSDOMParser;
 
 	vector<string> mouseFiles;
-	Glob("/opt/vizstack/share/templates/mouse/*.xml", mouseFiles);
-	Glob("/etc/vizstack/templates/mouse/*.xml", mouseFiles);
+	vector<VSDOMNode> nodes;
+	int numNodes;
+
+	if(g_standalone)
+	{
+		getTemplateFiles("mouse", mouseFiles);
+		numNodes = mouseFiles.size();
+	}
+	else
+	{
+		if(!getTemplates(nodes, "mouse", g_ssmSocket))
+		{
+			return;
+		}
+		numNodes = nodes.size();
+	}
+
 	if(g_debugPrints)
 		cout << "Loading mouse templates" << endl;
 
-	for(unsigned int i=0;i<mouseFiles.size();i++)
+	for(unsigned int i=0;i<numNodes;i++)
 	{
-		if(g_debugPrints)
-			cout << "Loading "<< mouseFiles[i] << " .. " << endl;
-
-		errorHandler.resetErrors();
-		DOMDocument *mouseDoc = mouseParser->Parse(mouseFiles[i].c_str(), true, errorHandler);
-
-		// Print out warning and error messages
-		vector<string> msgs;
-		errorHandler.getMessages (msgs);
-		for (unsigned int j = 0; j < msgs.size (); j++)
-			cout << msgs[j] << endl;
-
-		if(mouseDoc)
+		VSDOMNode rootNode;
+		if(g_standalone)
 		{
+			if(g_debugPrints)
+				cout << "Loading "<< mouseFiles[i] << " .. " << endl;
 
-			bool noErrors = true;
+			errorHandler.resetErrors();
+			VSDOMDoc *mouseDoc = mouseParser->ParseFile(mouseFiles[i].c_str(), errorHandler);
 
-			Mouse mouse;
-			DOMNode* rootNode = (DOMNode*)mouseDoc->getDocumentElement();
-
-			mouse.index = 0;
-			mouse.type = getValueAsString(getChildNode(rootNode, "name"));
-			mouse.driver = getValueAsString(getChildNode(rootNode, "driver"));
-
-			vector<DOMNode*> optionNodes = getChildNodes(rootNode, "option");
-			for(unsigned int j=0;j<optionNodes.size();j++)
-			{
-				OptVal ov;
-				ov.name  = getValueAsString(getChildNode(optionNodes[j], "name"));
-				ov.value  = getValueAsString(getChildNode(optionNodes[j], "value"));
-				mouse.optval.push_back(ov);
-			}
-
-			setMouse(mouseTemplates,mouse);		
+			// Print out warning and error messages
+			vector<string> msgs;
+			errorHandler.getMessages (msgs);
+			for (unsigned int j = 0; j < msgs.size (); j++)
+				cout << msgs[j] << endl;
+			if(!mouseDoc)
+				continue;
+			rootNode = mouseDoc->getRootNode();
 		}
+		else
+		{
+			rootNode = nodes[i];
+		}
+
+		bool noErrors = true;
+
+		Mouse mouse;
+
+		mouse.index = 0;
+		mouse.type = rootNode.getChildNode("type").getValueAsString();
+		mouse.driver = rootNode.getChildNode("driver").getValueAsString();
+
+		vector<VSDOMNode> optionNodes = rootNode.getChildNodes("option");
+		for(unsigned int j=0;j<optionNodes.size();j++)
+		{
+			OptVal ov;
+			ov.name  = optionNodes[j].getChildNode("name").getValueAsString();
+			ov.value  = optionNodes[j].getChildNode("value").getValueAsString();
+			mouse.optval.push_back(ov);
+		}
+
+		setMouse(mouseTemplates,mouse);		
 	}
 }
 
@@ -2028,205 +2091,228 @@ void getDisplayTemplates(vector<DisplayTemplate>& displayTemplates)
 	VSDOMParser *displayParser = new VSDOMParser;
 
 	vector<string> monitorFiles;
-	Glob("/opt/vizstack/share/templates/displays/*.xml", monitorFiles);
-	Glob("/etc/vizstack/templates/displays/*.xml", monitorFiles);
+	vector<VSDOMNode> nodes;
+	int numNodes;
 
-	for(unsigned int i=0;i<monitorFiles.size();i++)
+	if(g_standalone)
 	{
-		if(g_debugPrints)
-			cout << "Loading "<< monitorFiles[i] << " .. " << endl;
-
-		errorHandler.resetErrors();
-		DOMDocument *monitor = displayParser->Parse(monitorFiles[i].c_str(), true, errorHandler);
-
-		// Print out warning and error messages
-		vector<string> msgs;
-		errorHandler.getMessages (msgs);
-		for (unsigned int i = 0; i < msgs.size (); i++)
-			cout << msgs[i] << endl;
-
-		if(monitor)
+		getTemplateFiles("displays", monitorFiles);
+		numNodes = monitorFiles.size();
+	}
+	else
+	{
+		if(!getTemplates(nodes, "display", g_ssmSocket))
 		{
+			return;
+		}
+		numNodes = nodes.size();
+	}
 
-			DisplayTemplate dt;
-			DOMNode* rootNode = (DOMNode*)monitor->getDocumentElement();
+	for(unsigned int i=0;i<numNodes;i++)
+	{
+		VSDOMNode rootNode;
+		if(g_standalone)
+		{
+			if(g_debugPrints)
+				cout << "Loading "<< monitorFiles[i] << " .. " << endl;
 
-			dt.name = getValueAsString(getChildNode(rootNode, "model"));
-			dt.vendor = getValueAsString(getChildNode(rootNode, "vendor"));
-			dt.input = getValueAsString(getChildNode(rootNode, "input"));
-			dt.hasEdid = false;
-			DOMNode* edidNode = getChildNode(rootNode, "edid");
-			if(edidNode)
+			errorHandler.resetErrors();
+			VSDOMDoc *monitor = displayParser->ParseFile(monitorFiles[i].c_str(), errorHandler);
+
+			// Print out warning and error messages
+			vector<string> msgs;
+			errorHandler.getMessages (msgs);
+			for (unsigned int i = 0; i < msgs.size (); i++)
+				cout << msgs[i] << endl;
+
+			if(!monitor)
+				continue;
+
+			rootNode = monitor->getRootNode();
+		}
+		else
+		{
+			rootNode = nodes[i];
+		}
+
+		DisplayTemplate dt;
+
+		dt.name = rootNode.getChildNode("model").getValueAsString();
+		dt.input = rootNode.getChildNode("input").getValueAsString();
+		dt.hasEdid = false;
+		VSDOMNode  edidNode = rootNode.getChildNode("edid");
+		if(!edidNode.isEmpty())
+		{
+			dt.edidFile = edidNode.getValueAsString();
+			FILE *fp = fopen(dt.edidFile.c_str(),"rb"); // FIXME: we can implement this easier using fstat ??
+			if(!fp)
 			{
-				dt.edidFile = getValueAsString(edidNode);
-				FILE *fp = fopen(dt.edidFile.c_str(),"rb"); // FIXME: we can implement this easier using fstat ??
-				if(!fp)
-				{
-					cerr << "ERROR: Unable to open EDID file '"<< dt.edidFile <<"'"<<endl;
-					exit(-1);
-				}
-				if(fseek(fp,  0, SEEK_END)<0)
-				{
-					cerr << "ERROR: unable to process EDID file '"<< dt.edidFile << "'. Failed to seek to the end."<<endl;
-					exit(-1);
-				}
-				int fileSize;
-				if((fileSize=ftell(fp))<=0)
-				{
-					cerr << "ERROR: unable to process EDID file '"<< dt.edidFile << "'. Failed to get file size."<<endl;
-					exit(-1);
-				}
+				cerr << "ERROR: Unable to open EDID file '"<< dt.edidFile <<"'"<<endl;
+				exit(-1);
+			}
+			if(fseek(fp,  0, SEEK_END)<0)
+			{
+				cerr << "ERROR: unable to process EDID file '"<< dt.edidFile << "'. Failed to seek to the end."<<endl;
+				exit(-1);
+			}
+			int fileSize;
+			if((fileSize=ftell(fp))<=0)
+			{
+				cerr << "ERROR: unable to process EDID file '"<< dt.edidFile << "'. Failed to get file size."<<endl;
+				exit(-1);
+			}
 
-				if(fileSize>EDID_BLOCK_SIZE*MAX_EDID_BLOCKS)
+			if(fileSize>EDID_BLOCK_SIZE*MAX_EDID_BLOCKS)
+			{
+				cerr << "ERROR: Bad EDID file '"<< dt.edidFile <<"'. It's size("<<fileSize<<") is too large for me to handle"<<endl;
+				exit(-1);
+			}
+			if((fileSize%EDID_BLOCK_SIZE)!=0)
+			{
+				cerr << "ERROR: Bad EDID file '"<< dt.edidFile <<"'. It's size("<<fileSize<<") is incorrect - needs to be a multiple of "<< EDID_BLOCK_SIZE<<" bytes."<<endl;
+				exit(-1);
+			}
+			fclose(fp);
+			dt.hasEdid = true;
+		}
+		else
+		{
+			VSDOMNode  edidBytesNode = rootNode.getChildNode( "edidBytes");
+			if(!edidBytesNode.isEmpty())
+			{
+				string edidBytes = edidBytesNode.getValueAsString();
+				int edidSize = edidBytes.size();
+				if (edidSize==0)
 				{
-					cerr << "ERROR: Bad EDID file '"<< dt.edidFile <<"'. It's size("<<fileSize<<") is too large for me to handle"<<endl;
+					cerr << "ERROR: Number of EDID bytes is zero!"<<endl;
 					exit(-1);
 				}
-				if((fileSize%EDID_BLOCK_SIZE)!=0)
+				if((edidSize%(EDID_BLOCK_SIZE*2))!=0) // FIXME: the "2" here is about the bytes being in hex
 				{
-					cerr << "ERROR: Bad EDID file '"<< dt.edidFile <<"'. It's size("<<fileSize<<") is incorrect - needs to be a multiple of "<< EDID_BLOCK_SIZE<<" bytes."<<endl;
+					cerr << "ERROR: Number of EDID bytes is incorrect - needs to be a multiple of "<< EDID_BLOCK_SIZE<<" bytes."<<endl;
 					exit(-1);
 				}
-				fclose(fp);
+				if(edidSize>(EDID_BLOCK_SIZE*MAX_EDID_BLOCKS*2))
+				{
+					cerr << "ERROR: Too many edid bytes. Max allowed is " << EDID_BLOCK_SIZE*MAX_EDID_BLOCKS << endl;
+					exit(-1);
+				}
+				// The EDID string will have two hex chars per byte
+				for(unsigned int i=0;i<edidSize;i+=2)
+				{
+					const char *instr = edidBytes.c_str();
+					char hexVal[3] = { instr[i], instr[i+1], 0 };
+					unsigned int val;
+					sscanf(hexVal, "%x", &val);
+					//printf("%2x ", val);
+					dt.edidBytes[i/2] = (val & 0xff);
+				}
+				dt.numEdidBytes = edidSize/2;
 				dt.hasEdid = true;
+				//cout << "Has EDID bytes = " << dt.numEdidBytes << endl;
 			}
-			else
-			{
-				DOMNode* edidBytesNode = getChildNode(rootNode, "edidBytes");
-				if(edidBytesNode)
-				{
-					string edidBytes = getValueAsString(edidBytesNode);
-					int edidSize = edidBytes.size();
-					if (edidSize==0)
-					{
-						cerr << "ERROR: Number of EDID bytes is zero!"<<endl;
-						exit(-1);
-					}
-					if((edidSize%(EDID_BLOCK_SIZE*2))!=0) // FIXME: the "2" here is about the bytes being in hex
-					{
-						cerr << "ERROR: Number of EDID bytes is incorrect - needs to be a multiple of "<< EDID_BLOCK_SIZE<<" bytes."<<endl;
-						exit(-1);
-					}
-					if(edidSize>(EDID_BLOCK_SIZE*MAX_EDID_BLOCKS*2))
-					{
-						cerr << "ERROR: Too many edid bytes. Max allowed is " << EDID_BLOCK_SIZE*MAX_EDID_BLOCKS << endl;
-						exit(-1);
-					}
-					// The EDID string will have two hex chars per byte
-					for(unsigned int i=0;i<edidSize;i+=2)
-					{
-						const char *instr = edidBytes.c_str();
-						char hexVal[3] = { instr[i], instr[i+1], 0 };
-						int val;
-						sscanf(hexVal, "%x", &val);
-						dt.edidBytes[i/2] = val %255;
-					}
-					dt.numEdidBytes = edidSize/2;
-					dt.hasEdid = true;
-				}
-			}
+		}
 
-			if(!dt.hasEdid)
-			{
-				DOMNode* hsync = getChildNode(rootNode,"hsync");
-				DOMNode *valNode;
-				valNode = getChildNode(hsync,"min");
-				if(!valNode)
-				{
-					dt.hsyncRange[0] = MIN_HSYNC;
-				}
-				else
-				{
-					dt.hsyncRange[0] = getValueAsString(valNode);
-				}
-				valNode = getChildNode(hsync,"max");
-				if(!valNode)
-				{
-					dt.hsyncRange[1] = MAX_HSYNC;
-				}
-				else
-				{
-					dt.hsyncRange[1] = getValueAsString(valNode);
-				}
-
-				DOMNode* vrefresh = getChildNode(rootNode,"vrefresh");
-				valNode = getChildNode(vrefresh,"min");
-				if(!valNode)
-				{
-					dt.vrefreshRange[0] = MIN_VREFRESH;
-				}
-				else
-				{
-					dt.vrefreshRange[0] = getValueAsString(valNode);
-				}
-				valNode = getChildNode(vrefresh,"max");
-				if(!valNode)
-				{
-					dt.vrefreshRange[1] = MAX_VREFRESH;
-				}
-				else
-				{
-					dt.vrefreshRange[1] = getValueAsString(valNode);
-				}
-			}
-			else
+		if(!dt.hasEdid)
+		{
+			VSDOMNode  hsync = rootNode.getChildNode("hsync");
+			VSDOMNode valNode;
+			valNode = hsync.getChildNode("min");
+			if(valNode.isEmpty())
 			{
 				dt.hsyncRange[0] = MIN_HSYNC;
+			}
+			else
+			{
+				dt.hsyncRange[0] = valNode.getValueAsString();
+			}
+			valNode = hsync.getChildNode("max");
+			if(valNode.isEmpty())
+			{
 				dt.hsyncRange[1] = MAX_HSYNC;
+			}
+			else
+			{
+				dt.hsyncRange[1] = valNode.getValueAsString();
+			}
+
+			VSDOMNode  vrefresh = rootNode.getChildNode("vrefresh");
+			valNode = vrefresh.getChildNode("min");
+			if(valNode.isEmpty())
+			{
 				dt.vrefreshRange[0] = MIN_VREFRESH;
+			}
+			else
+			{
+				dt.vrefreshRange[0] = valNode.getValueAsString();
+			}
+			valNode = vrefresh.getChildNode("max");
+			if(valNode.isEmpty())
+			{
 				dt.vrefreshRange[1] = MAX_VREFRESH;
 			}
-
-			vector<DOMNode*> modes = getChildNodes(rootNode, "mode");
-			for(unsigned int i=0;i<modes.size();i++)
+			else
 			{
-				DisplayMode dm;
-				dm.type = getValueAsString(getChildNode(modes[i], "type"));
-				dm.width = getValueAsInt(getChildNode(modes[i], "width"));
-				dm.height = getValueAsInt(getChildNode(modes[i], "height"));
-				dm.refreshRate = getValueAsFloat(getChildNode(modes[i], "refresh"));
-				DOMNode *valueNode =getChildNode(modes[i], "value");
-				if(valueNode)
-					dm.value = getValueAsString(valueNode);
-				else
-					dm.value = "";
-
-				vector<DOMNode*> aliasNodes = getChildNodes(modes[i], "alias");
-				for(unsigned int j=0;j<aliasNodes.size();j++)
-				{
-					dm.alias = getValueAsString(aliasNodes[j]);
-					// validation : check if this alias is already defined !
-					for(unsigned int k=0;k<dt.displayModes.size();k++)
-					{
-						if(dt.displayModes[k].alias == dm.alias)
-						{
-							cerr << "ERROR: Mode alias '"<<dm.alias<<"' used more than once. You may define a mode alias only once."<< endl;
-							exit(-1);
-						}
-					}
-					dt.displayModes.push_back(dm);
-				}
+				dt.vrefreshRange[1] = valNode.getValueAsString();
 			}
-
-			DOMNode* defaultModeNode = getChildNode(rootNode, "default_mode");
-			string defaultMode = getValueAsString(defaultModeNode);
-			bool modeFound = false;
-			for(unsigned int i=0;i<dt.displayModes.size();i++)
-			{
-				if(dt.displayModes[i].alias==defaultMode)
-				{
-					modeFound = true;
-					break;
-				}
-			}
-			if(!modeFound)
-			{
-				cerr << "ERROR: No default mode specified for this display device. Ignoring!" << endl;
-			}
-
-			dt.defaultDisplayMode = defaultMode;
-			setDisplay(displayTemplates,dt);
 		}
+		else
+		{
+			dt.hsyncRange[0] = MIN_HSYNC;
+			dt.hsyncRange[1] = MAX_HSYNC;
+			dt.vrefreshRange[0] = MIN_VREFRESH;
+			dt.vrefreshRange[1] = MAX_VREFRESH;
+		}
+
+		vector<VSDOMNode > modes = rootNode.getChildNodes("mode");
+		for(unsigned int i=0;i<modes.size();i++)
+		{
+			DisplayMode dm;
+			dm.type = modes[i].getChildNode("type").getValueAsString();
+			dm.width = modes[i].getChildNode("width").getValueAsInt();
+			dm.height = modes[i].getChildNode("height").getValueAsInt();
+			dm.refreshRate = modes[i].getChildNode("refresh").getValueAsFloat();
+			VSDOMNode valueNode = modes[i].getChildNode("value");
+			if(!valueNode.isEmpty())
+				dm.value = valueNode.getValueAsString();
+			else
+				dm.value = "";
+
+			vector<VSDOMNode > aliasNodes = modes[i].getChildNodes( "alias");
+			for(unsigned int j=0;j<aliasNodes.size();j++)
+			{
+				dm.alias = aliasNodes[j].getValueAsString();
+				// validation : check if this alias is already defined !
+				for(unsigned int k=0;k<dt.displayModes.size();k++)
+				{
+					if(dt.displayModes[k].alias == dm.alias)
+					{
+						cerr << "ERROR: Mode alias '"<<dm.alias<<"' used more than once. You may define a mode alias only once."<< endl;
+						exit(-1);
+					}
+				}
+				dt.displayModes.push_back(dm);
+			}
+		}
+
+		VSDOMNode  defaultModeNode = rootNode.getChildNode("default_mode");
+		string defaultMode = defaultModeNode.getValueAsString();
+		bool modeFound = false;
+		for(unsigned int i=0;i<dt.displayModes.size();i++)
+		{
+			if(dt.displayModes[i].alias==defaultMode)
+			{
+				modeFound = true;
+				break;
+			}
+		}
+		if(!modeFound)
+		{
+			cerr << "ERROR: No default mode specified for this display device. Ignoring!" << endl;
+		}
+
+		dt.defaultDisplayMode = defaultMode;
+		setDisplay(displayTemplates,dt);
 	}
 
 	delete displayParser;
@@ -2239,44 +2325,64 @@ void getGPUTemplates(vector<GPUInfo>& gpuTemplates)
 	VSDOMParser *gpuParser = new VSDOMParser;
 
 	vector<string> gpuFiles;
-	Glob("/opt/vizstack/share/templates/gpus/*.xml", gpuFiles);
-	Glob("/etc/vizstack/templates/gpus/*.xml", gpuFiles);
+	vector<VSDOMNode > nodes;
+	int numNodes;
 
-	for(unsigned int i=0;i<gpuFiles.size();i++)
+	if(g_standalone)
 	{
-		if(g_debugPrints)
-			cout << "Loading "<< gpuFiles[i] << " .. " << endl;
+		getTemplateFiles("gpus", gpuFiles);
+		numNodes = gpuFiles.size();
+	}
+	else
+	{
+		if(!getTemplates(nodes, "gpu", g_ssmSocket))
+		{
+			return;
+		}
+		numNodes = nodes.size();
+	}
 
-		errorHandler.resetErrors();
-		DOMDocument *gpu = gpuParser->Parse(gpuFiles[i].c_str(), true, errorHandler);
+	for(unsigned int i=0;i<numNodes;i++)
+	{
+		VSDOMNode  rootNode;
+		if(g_standalone)
+		{
+			if(g_debugPrints)
+				cout << "Loading "<< gpuFiles[i] << " .. " << endl;
 
-		// Print out warning and error messages
-		vector<string> msgs;
-		errorHandler.getMessages (msgs);
-		for (unsigned int i = 0; i < msgs.size (); i++)
-			cout << msgs[i] << endl;
+			errorHandler.resetErrors();
+			VSDOMDoc *gpu = gpuParser->ParseFile(gpuFiles[i].c_str(), errorHandler);
 
-		if(!gpu)
-			continue;
+			// Print out warning and error messages
+			vector<string> msgs;
+			errorHandler.getMessages (msgs);
+			for (unsigned int i = 0; i < msgs.size (); i++)
+				cout << msgs[i] << endl;
+
+			if(!gpu)
+				continue;
+
+			rootNode = gpu->getRootNode();
+		}
+		else
+		{
+			rootNode = nodes[i];
+		}
 
 		GPUInfo gi;
 		gi.usageCount = 0;
 
-		DOMNode* rootNode = (DOMNode*)gpu->getDocumentElement();
+		gi.modelName = rootNode.getChildNode("model").getValueAsString();
+		gi.vendorName = rootNode.getChildNode("vendor").getValueAsString();
 
-		gi.modelName = getValueAsString(getChildNode(rootNode, "model"));
-		gi.vendorName = getValueAsString(getChildNode(rootNode, "vendor"));
-		gi.pciDeviceId = getValueAsString(getChildNode(rootNode, "pci_device_id"));
-		gi.pciVendorId = getValueAsString(getChildNode(rootNode, "pci_vendor_id"));
+		vector<VSDOMNode > scanouts = rootNode.getChildNodes("scanout_caps");
 
-		vector<DOMNode*> scanouts = getChildNodes(rootNode, "scanout_caps");
-
-		bool noErrors = false;
+		bool noErrors = true;
 
 		for(unsigned int j=0;j<scanouts.size();j++)
 		{
-			DOMNode* thisScanout = scanouts[j];
-			unsigned int portIndex = getValueAsInt(getChildNode(thisScanout, "index"));
+			VSDOMNode  thisScanout = scanouts[j];
+			unsigned int portIndex = thisScanout.getChildNode("index").getValueAsInt();
 			if(portIndex != j)
 			{
 				cerr << "Port index specified is "<<portIndex<<", expected "<<j << endl;
@@ -2284,11 +2390,11 @@ void getGPUTemplates(vector<GPUInfo>& gpuTemplates)
 				break;
 			}
 
-			vector<DOMNode*> typeNodes = getChildNodes(thisScanout, "type");
+			vector<VSDOMNode > typeNodes = thisScanout.getChildNodes("type");
 			vector<string> scanTypes;
 			for(unsigned int k=0;k<typeNodes.size();k++)
 			{
-				scanTypes.push_back(getValueAsString(typeNodes[k]));
+				scanTypes.push_back(typeNodes[k].getValueAsString());
 			}
 			gi.portUsageCount.push_back(0);
 			gi.portOutputCaps.push_back(scanTypes);
@@ -2296,17 +2402,21 @@ void getGPUTemplates(vector<GPUInfo>& gpuTemplates)
 			gi.portScanout.push_back(dummy);
 		}
 
+		if(noErrors)
+		{
+			VSDOMNode  limitsNode = rootNode.getChildNode( "limits");
+			gi.maxFramebufferWidth = limitsNode.getChildNode("max_width").getValueAsInt();
+			gi.maxFramebufferHeight = limitsNode.getChildNode("max_height").getValueAsInt();
+		}
+
+
 		if(!noErrors)
 		{
-			DOMNode* limitsNode = getChildNode(rootNode, "limits");
-			gi.maxFramebufferWidth = getValueAsInt(getChildNode(limitsNode, "max_width"));
-			gi.maxFramebufferHeight = getValueAsInt(getChildNode(limitsNode, "max_height"));
-
-			gpuTemplates.push_back(gi);
+			cerr << "Skipped adding " << gi.modelName << endl;
 		}
 		else
 		{
-			cerr << "Skipped adding " << gi.modelName << endl;
+			gpuTemplates.push_back(gi);
 		}
 	}
 }
@@ -2316,139 +2426,226 @@ bool getLocalConfig(string configFile, vector<GPUInfo>& gpuTemplates, vector<Key
 	char myHostName[256];
 	gethostname(myHostName, sizeof(myHostName));
 
-	VSDOMParserErrorHandler errorHandler;
-	// Load the display device templates
-	VSDOMParser *configParser = new VSDOMParser;
+	vector<VSDOMNode > nodesList;
 
-	errorHandler.resetErrors();
-	DOMDocument *config = configParser->Parse(configFile.c_str(), true, errorHandler);
-
-	// Print out warning and error messages
-	vector<string> msgs;
-	errorHandler.getMessages (msgs);
-	for (unsigned int i = 0; i < msgs.size (); i++)
-		cout << msgs[i] << endl;
-
-	if(!config)
+	if(g_standalone)
 	{
-		cerr << "FATAL: Unable to get the local configuration of this node." << endl;
-		return false;
-	}
+		VSDOMParserErrorHandler errorHandler;
+		// Load the display device templates
+		VSDOMParser *configParser = new VSDOMParser;
 
-	DOMNode* rootNode = (DOMNode*)config->getDocumentElement();
-	
-	DOMNode* nodesNode = getChildNode(rootNode, "nodes");
-	if(!nodesNode)
+		errorHandler.resetErrors();
+		VSDOMDoc *config = configParser->ParseFile(configFile.c_str(), errorHandler);
+
+		// Print out warning and error messages
+		vector<string> msgs;
+		errorHandler.getMessages (msgs);
+		for (unsigned int i = 0; i < msgs.size (); i++)
+			cout << msgs[i] << endl;
+
+		if(!config)
+		{
+			cerr << "FATAL: Unable to get the local configuration of this node." << endl;
+			return false;
+		}
+
+		VSDOMNode  rootNode = config->getRootNode();
+
+		VSDOMNode  nodesNode = rootNode.getChildNode("nodes");
+		if(nodesNode.isEmpty())
+		{
+			cerr << "FATAL: Need node inforamtion in the local configuration file" << endl;
+			return false;
+		}
+
+		nodesList = nodesNode.getChildNodes("node");
+	}
+	else
 	{
-		cerr << "FATAL: Need node inforamtion in the local configuration file" << endl;
-		return false;
-	}
+		char *nodeConfig = getNodeConfig(g_hostName.c_str(), g_ssmSocket);
 
-	vector<DOMNode*> nodesList = getChildNodes(nodesNode, "node");
+		VSDOMParserErrorHandler errorHandler;
+		VSDOMParser *configParser = new VSDOMParser;
+		errorHandler.resetErrors();
+		VSDOMDoc *config = configParser->ParseString(nodeConfig, errorHandler);
+		if(!config)
+		{
+			// Print out warning and error messages
+			vector<string> msgs;
+			errorHandler.getMessages (msgs);
+			for (unsigned int i = 0; i < msgs.size (); i++)
+				cout << msgs[i] << endl;
+
+			fprintf(stderr, "ERROR - bad return XML from SSM.\n");
+			fprintf(stderr, "Return XML was --\n");
+			fprintf(stderr, "----------------------------------------------\n");
+			fprintf(stderr, "%s", nodeConfig);
+			fprintf(stderr, "\n----------------------------------------------\n");
+			return false;
+		}
+
+		// Ensure that return status is "success"
+		VSDOMNode  rootNode = config->getRootNode();
+		VSDOMNode  responseNode = rootNode.getChildNode("response");
+		int status = responseNode.getChildNode("status").getValueAsInt();
+		if(status!=0)
+		{
+			string msg = responseNode.getChildNode("message").getValueAsString();
+			fprintf(stderr, "ERROR - Failure returned from SSM : %s\n", msg.c_str());
+			delete configParser;
+			return false;
+		}
+
+		VSDOMNode  retValNode = responseNode.getChildNode("return_value");
+		nodesList = retValNode.getChildNodes( "node");
+	}
 
 	bool configFound = false;
 	bool errorsFound = false;
 	for(unsigned int i=0;i<nodesList.size();i++)
 	{
-		DOMNode* thisNode = nodesList[i];
-		string nodeName = getValueAsString(getChildNode(thisNode, "name"));
+		VSDOMNode  thisNode = nodesList[i];
+		string nodeName = thisNode.getChildNode("hostname").getValueAsString();
 
-		if((nodeName=="localhost") || (nodeName==myHostName))
+		// dont process non-matching nodes. localhost is supposed to
+		// be the only node if it exists (kind of a bug if I think of it).
+		if (!((nodeName=="localhost") || (nodeName==myHostName)))
+			continue;
+
+		vector<VSDOMNode > gpuNodes = thisNode.getChildNodes("gpu");
+		for(unsigned int j=0; j<gpuNodes.size(); j++)
 		{
-			vector<DOMNode*> gpuNodes = getChildNodes(thisNode, "gpu");
-			for(unsigned int j=0; j<gpuNodes.size(); j++)
+			VSDOMNode thisGPU=gpuNodes[j];
+
+			unsigned int index = thisGPU.getChildNode("index").getValueAsInt();
+
+			if(index != j)
 			{
-				DOMNode *thisGPU=gpuNodes[j];
-				unsigned int index = getValueAsInt(getChildNode(thisGPU, "index"));
-
-				if(index != j)
-				{
-					errorsFound = true;
-					cerr << "FATAL : GPU index is not in order" << endl;
-					break;
-				}
-				else
-				{
-					string busId = getValueAsString(getChildNode(thisGPU, "bus_id"));
-					string gpuModel = getValueAsString(getChildNode(thisGPU, "type"));
-					int allowScanOut = getValueAsInt(getChildNode(thisGPU, "useScanOut"));
-
-					GPUInfo gpu;
-					if(!getGPU(gpuTemplates, gpuModel, gpu))
-					{
-						cerr << "FATAL: Could not get the GPU information for GPU model '"<<gpuModel<<"'. I don't know any such device." << endl;
-						errorsFound = true;
-						break;
-					}
-					gpu.busID = busId;
-					gpu.allowScanOut = allowScanOut;
-					gpuInfo.push_back(gpu);
-				}
+				errorsFound = true;
+				cerr << "FATAL : GPU index is not in order" << endl;
+				break;
 			}
 
-			vector<DOMNode*> kbdNodes = getChildNodes(thisNode, "keyboard");
-			for(unsigned int j=0; j<kbdNodes.size(); j++)
+			VSDOMNode node;
+			node = thisGPU.getChildNode("model");
+			if(node.isEmpty())
 			{
-				DOMNode *thisKbd=kbdNodes[j];
-				unsigned int index = getValueAsInt(getChildNode(thisKbd, "index"));
-				string kbdType = getValueAsString(getChildNode(thisKbd, "type"));
-				string physAddr;
-				DOMNode *pNode = getChildNode(thisKbd, "phys_addr");
-				if(pNode)
-				{
-					physAddr = getValueAsString(pNode);
-				}
+				cerr << "FATAL: No model defined for GPU #"<<index<< endl;
+				errorsFound = true;
+				break;
+			}
+			string gpuModel = node.getValueAsString();
 
-				Keyboard kbd;
-				if(!getKeyboard(keyboardTemplates, kbdType, kbd))
-				{
-						cerr << "FATAL: Could not get the information for keyboard type '"<<kbdType<<"'. I don't know any such device." << endl;
-						errorsFound = true;
-						break;
-				}
-				kbd.index = index;
-				kbd.physAddr = physAddr;
-				validKeyboards.push_back(kbd);
+			GPUInfo gpu;
+			if(!getGPU(gpuTemplates, gpuModel, gpu))
+			{
+				cerr << "FATAL: Could not get the GPU information for GPU model '"<<gpuModel<<"'. I don't know any such device." << endl;
+				errorsFound = true;
+				break;
 			}
 
-			vector<DOMNode*> mouseNodes = getChildNodes(thisNode, "mouse");
-			for(unsigned int j=0; j<mouseNodes.size(); j++)
+			node = thisGPU.getChildNode("busID");
+			string busId;
+			if(node.isEmpty())
 			{
-				DOMNode *thisMouse=mouseNodes[j];
-				unsigned int index = getValueAsInt(getChildNode(thisMouse, "index"));
-				string mouseType = getValueAsString(getChildNode(thisMouse, "type"));
-				string physAddr;
-				DOMNode *pNode = getChildNode(thisMouse, "phys_addr");
-				if(pNode)
-				{
-					physAddr = getValueAsString(pNode);
-				}
-
-				Mouse mouse;
-				if(!getMouse(mouseTemplates, mouseType, mouse))
-				{
-						cerr << "FATAL: Could not get the information for mouse type '"<<mouseType<<"'. I don't know any such device." << endl;
-						errorsFound = true;
-						break;
-				}
-				mouse.index = index;
-				mouse.physAddr = physAddr;
-				validMice.push_back(mouse);
+				busId.clear();
+			}
+			else
+			{
+				busId = node.getValueAsString();
 			}
 
-			vector<DOMNode*> sliBridgeNodes = getChildNodes(thisNode, "sli");
-			for(unsigned int j=0;j<sliBridgeNodes.size();j++)
+			int allowScanOut;
+			node = thisGPU.getChildNode("useScanOut");
+			if(node.isEmpty())
 			{
-				DOMNode *thisSLI = sliBridgeNodes[j];
-				unsigned int index = getValueAsInt(getChildNode(thisSLI, "index"));
-				string sliType = getValueAsString(getChildNode(thisSLI, "type"));
-				unsigned int gpu0 = getValueAsInt(getChildNode(thisSLI, "gpu0"));
-				unsigned int gpu1 = getValueAsInt(getChildNode(thisSLI, "gpu1"));
-				SLI sli;
-				sli.index = index;
-				if (sliType=="discrete")
-					sli.isQuadroPlex = false;
-				else
+				allowScanOut = gpu.allowScanOut;
+			}
+			else
+			{
+				allowScanOut = node.getValueAsInt();
+			}
+
+			int allowNoScanOut;
+			node = thisGPU.getChildNode("allowNoScanOut");
+			if(node.isEmpty())
+			{
+				allowNoScanOut = gpu.allowNoScanOut;
+			}
+			else
+			{
+				allowNoScanOut = node.getValueAsInt();
+			}
+
+			gpu.busID = busId;
+			gpu.allowScanOut = allowScanOut;
+			gpu.allowNoScanOut = allowNoScanOut;
+			gpuInfo.push_back(gpu);
+		}
+
+		vector<VSDOMNode > kbdNodes = thisNode.getChildNodes("keyboard");
+		for(unsigned int j=0; j<kbdNodes.size(); j++)
+		{
+			VSDOMNode thisKbd=kbdNodes[j];
+			unsigned int index = thisKbd.getChildNode("index").getValueAsInt();
+			string kbdType = thisKbd.getChildNode("type").getValueAsString();
+			string physAddr;
+			VSDOMNode pNode = thisKbd.getChildNode("phys_addr");
+			if(!pNode.isEmpty())
+			{
+				physAddr = pNode.getValueAsString();
+			}
+
+			Keyboard kbd;
+			if(!getKeyboard(keyboardTemplates, kbdType, kbd))
+			{
+				cerr << "FATAL: Could not get the information for keyboard type '"<<kbdType<<"'. I don't know any such device." << endl;
+				errorsFound = true;
+				break;
+			}
+			kbd.index = index;
+			kbd.physAddr = physAddr;
+			validKeyboards.push_back(kbd);
+		}
+
+		vector<VSDOMNode > mouseNodes = thisNode.getChildNodes("mouse");
+		for(unsigned int j=0; j<mouseNodes.size(); j++)
+		{
+			VSDOMNode thisMouse=mouseNodes[j];
+			unsigned int index = thisMouse.getChildNode("index").getValueAsInt();
+			string mouseType = thisMouse.getChildNode("type").getValueAsString();
+			string physAddr;
+			VSDOMNode pNode = thisMouse.getChildNode("phys_addr");
+			if(!pNode.isEmpty())
+			{
+				physAddr = pNode.getValueAsString();
+			}
+
+			Mouse mouse;
+			if(!getMouse(mouseTemplates, mouseType, mouse))
+			{
+				cerr << "FATAL: Could not get the information for mouse type '"<<mouseType<<"'. I don't know any such device." << endl;
+				errorsFound = true;
+				break;
+			}
+			mouse.index = index;
+			mouse.physAddr = physAddr;
+			validMice.push_back(mouse);
+		}
+
+		vector<VSDOMNode > sliBridgeNodes = thisNode.getChildNodes( "sli");
+		for(unsigned int j=0;j<sliBridgeNodes.size();j++)
+		{
+			VSDOMNode thisSLI = sliBridgeNodes[j];
+			unsigned int index = thisSLI.getChildNode("index").getValueAsInt();
+			string sliType = thisSLI.getChildNode("type").getValueAsString();
+			unsigned int gpu0 = thisSLI.getChildNode("gpu0").getValueAsInt();
+			unsigned int gpu1 = thisSLI.getChildNode("gpu1").getValueAsInt();
+			SLI sli;
+			sli.index = index;
+			if (sliType=="discrete")
+				sli.isQuadroPlex = false;
+			else
 				if (sliType=="quadroplex")
 					sli.isQuadroPlex = true;
 				else
@@ -2456,15 +2653,14 @@ bool getLocalConfig(string configFile, vector<GPUInfo>& gpuTemplates, vector<Key
 					cerr << "FATAL: Bad sli type '"<<sliType<<"'"<<endl;
 					return false;
 				}
-				sli.gpu0 = gpu0;
-				sli.gpu1 = gpu1;
-				sliBridges.push_back(sli);
-			}
-			if(!errorsFound)
-				configFound = true;
-
-			break;
+			sli.gpu0 = gpu0;
+			sli.gpu1 = gpu1;
+			sliBridges.push_back(sli);
 		}
+		if(!errorsFound)
+			configFound = true;
+
+		break;
 	}
 
 	if(errorsFound)
@@ -2483,7 +2679,7 @@ bool getLocalConfig(string configFile, vector<GPUInfo>& gpuTemplates, vector<Key
 
 void usage(char *argv0)
 {
-	cerr << argv0 << " [--sysconfig=<sysconfig-filename>] <--input=<input-file>> [--output=<output-file>] [--edid-output-prefix=<prefix>] [--server-info=<filename>]" << endl;
+	cerr << argv0 << " [--nodeconfig=<sysconfig-filename>] <--input=<input-file>> [--output=<output-file>] [--edid-output-prefix=<prefix>] [--server-info=<filename>] [--no-ssm]" << endl;
 	exit(-1);
 }
 
@@ -2508,18 +2704,35 @@ int main(int argc, char** argv)
 	string serverInfoFileName;
 	FILE *serverInfoFile = 0;
 	bool ignoreMissingDevices = false;
+	bool serverSpecified=false;
+	string whichHost;
+	string whichDisplay;
+	bool forceNoSSM=false;
 
 	if(getenv("VS_X_DEBUG"))
 	{
 		g_debugPrints = true;
 	}
 
+	g_templatedir.push_back("/opt/vizstack/share/templates");
+	g_templatedir.push_back("/etc/vizstack/templates");
+
 	for(unsigned int argIndex=1; argIndex<argc; argIndex++)
 	{
 		string argVal;
-		if (getArgVal(argv[argIndex],"--sysconfig=", argVal))
+		if (getArgVal(argv[argIndex],"--templatedir=", argVal))
+		{
+			g_templatedir.push_back(argVal);
+		}
+		else
+		if (getArgVal(argv[argIndex],"--nodeconfig=", argVal))
 		{
 			nodeConfigFile = argVal;
+		}
+		else
+		if (strcmp(argv[argIndex],"--no-ssm")==0)
+		{
+			forceNoSSM=true;
 		}
 		else
 		if (getArgVal(argv[argIndex],"--input=", argVal))
@@ -2529,14 +2742,14 @@ int main(int argc, char** argv)
 		else
 		if (getArgVal(argv[argIndex],"--output=", argVal))
 		{
-				outputFileName = argVal;
-				outputFile = fopen(argVal.c_str(),"w");
-				if(!outputFile)
-				{
-						fprintf(stderr, "Unable to open output file %s\n", argVal.c_str());
-						perror("FATAL: unable to open output file");
-						exit(-1);
-				}
+			outputFileName = argVal;
+			outputFile = fopen(argVal.c_str(),"w");
+			if(!outputFile)
+			{
+				fprintf(stderr, "Unable to open output file %s\n", argVal.c_str());
+				perror("FATAL: unable to open output file");
+				exit(-1);
+			}
 		}
 		else
 		if (getArgVal(argv[argIndex],"--edid-output-prefix=", argVal))
@@ -2566,27 +2779,91 @@ int main(int argc, char** argv)
 			usage(argv[0]);
 		}
 		else
+		if (strchr(argv[argIndex], ':')!=NULL)
+		{
+			serverSpecified = true;
+			char * serverSpec = strdup(argv[argIndex]);
+			if(serverSpec[0]!=':')
+			{
+				whichHost = strtok(serverSpec, ":");
+				whichDisplay = strtok(NULL, ":");
+			}
+			else
+			{
+				whichDisplay = strtok(serverSpec, ":");
+			}
+
+			whichDisplay = ":" + whichDisplay ; // Append a ":"
+
+			if(strtok(NULL,":")!=NULL)
+			{
+				cerr << "Invalid X server specification " << argv[argIndex] << endl;
+			}
+			free(serverSpec);
+		}
+		else
 		{
 			cerr << "Bad argument :"<< argv[argIndex]<<endl;
 			usage(argv[0]);
 		}
 	}
 
-	if(inputFileName.size()==0)
+	if((inputFileName.size()==0) && (!serverSpecified))
 	{
-		cerr << "No input files specified"<< endl;
+		cerr << "You need to specify an input file, or a server"<< endl;
 		usage(argv[0]);
 	}
 
-	FILE *fp=fopen(inputFileName.c_str(),"r");
-	if(!fp)
+	// Start using the XML parser
+	VSDOMParser::Initialize();
+
+	if(forceNoSSM)
 	{
-		char msg[4096];
-		sprintf(msg,"FATAL: unable to open input file %s", inputFileName.c_str());
-		perror(msg);
+		g_hostName = "localhost";
+		g_standalone = true;
+	}
+	else
+	if(!getSystemType())
+	{
 		exit(-1);
 	}
-	fclose(fp);
+
+	if((serverSpecified) && (whichHost.size()==0))
+	{
+		whichHost = g_hostName;
+	}
+
+	if(!g_standalone)
+	{
+		g_ssmSocket = connectToSSM(g_ssmHost, g_ssmPort);
+		if(g_ssmSocket==-1)
+		{
+			exit(-1);
+		}
+
+		// identify ourselves as a regular client.
+		string myIdentity = "<client />";
+
+		if(!authenticateToSSM(myIdentity, g_ssmSocket))
+		{
+			fprintf(stderr, "ERROR - Unable to authenticate to SSM\n");
+			closeSocket(g_ssmSocket);
+			exit(-1);
+		}
+	}
+
+	if(inputFileName.size()>0)
+	{
+		FILE *fp=fopen(inputFileName.c_str(),"r");
+		if(!fp)
+		{
+			char msg[4096];
+			sprintf(msg,"FATAL: unable to open input file %s", inputFileName.c_str());
+			perror(msg);
+			exit(-1);
+		}
+		fclose(fp);
+	}
 
 	// Data coming from config files
 	vector<GPUInfo> gpuInfo;
@@ -2600,9 +2877,6 @@ int main(int argc, char** argv)
 	vector<GPUInfo> gpuTemplates;
 
 	VSDOMParserErrorHandler errorHandler;
-
-	// Start using the XML parser
-	VSDOMParser::Initialize();
 
 	// Get information about types of GPU in this system
 	getGPUTemplates(gpuTemplates);
@@ -2641,7 +2915,7 @@ int main(int argc, char** argv)
 	}
 	if(g_debugPrints)
 	{
-		printf("Successfully parsed local config\n");
+		printf("Successfully parsed local config : %d GPU(s) %d Keyboard(s) %d Mice %d SLI bridge(s)\n", gpuInfo.size(), validKeyboards.size(), validMice.size(), sliBridges.size());
 	}
 
 	if(gpuInfo.size()==0)
@@ -2662,7 +2936,27 @@ int main(int argc, char** argv)
 	vector<string> usedIODeviceNames;
 
 	VSDOMParser *parser = new VSDOMParser;
-	DOMDocument* domDocument = parser->Parse(inputFileName.c_str(), true, errorHandler);
+	VSDOMDoc * domDocument=0;
+	VSDOMNode serverConfigNode;
+
+	if(serverSpecified)
+	{
+		if(g_debugPrints)
+			cout << "Getting configuration for "<< whichHost << whichDisplay << " from SSM." <<endl;
+		char* serverConfigText = getServerConfig(whichHost.c_str(), whichDisplay.c_str(), g_ssmSocket);
+		if(!serverConfigText)
+		{
+			fprintf(stderr, "Unable to get configuration of server %s%s\n",whichHost.c_str(), whichDisplay.c_str());
+			exit(-1);
+		}
+		domDocument = parser->ParseString(serverConfigText, errorHandler);
+	}
+	else
+	{
+		if(g_debugPrints)
+			cout << "Parsing input file " <<endl;
+		domDocument = parser->ParseFile(inputFileName.c_str(), errorHandler);
+	}
 
 	// Print out warning and error messages
 	errorHandler.getMessages (msgs);
@@ -2672,19 +2966,37 @@ int main(int argc, char** argv)
 	// Nothing else to do if errors happened
 	if(!domDocument)
 	{
-		XERCES_STD_QUALIFIER cout << "\nErrors occurred while processing "<< inputFileName << " (or other configuration file(s)). Failed to generate X configuration file. Aborting." << XERCES_STD_QUALIFIER endl;
+		std::cout << "\nErrors occurred while processing "<< inputFileName << " (or other configuration file(s)). Failed to generate X configuration file. Aborting." << std::endl;
 		return -1;
+	}
+
+	if(serverSpecified)
+	{
+		// Ensure that return status is "success"
+		VSDOMNode  rootNode = domDocument->getRootNode();
+		VSDOMNode  responseNode = rootNode.getChildNode("response");
+		int status = responseNode.getChildNode("status").getValueAsInt();
+		if(status!=0)
+		{
+			string msg = responseNode.getChildNode("message").getValueAsString();
+			fprintf(stderr, "ERROR - Failure returned from SSM : %s\n", msg.c_str());
+			exit(-1);
+		}
+
+		VSDOMNode  retValNode = responseNode.getChildNode("return_value");
+		serverConfigNode = retValNode.getChildNode( "server");
+	}
+	else
+	{
+		serverConfigNode = domDocument->getRootNode();
 	}
 
 	// Process the XML tree, extract data from it
 	bool combineFB;
-	if(g_debugPrints)
-		cout << "Parsing input file " <<endl;
-
 	vector<DisplayTemplate> usedDisplayTemplates;
 	vector<OptVal> cmdArgVal;
 	vector<SLI> usedSLIBridge;
-	if(!extractXMLData((DOMNode*)domDocument->getDocumentElement(), combineFB, framebuffers, gpuInfo, modulesToLoad, extensionSectionOptions, usedKeyboards, usedMice, displayTemplates, usedDisplayTemplates, validKeyboards, validMice, cmdArgVal, sliBridges, usedSLIBridge))
+	if(!extractXMLData(serverConfigNode, combineFB, framebuffers, gpuInfo, modulesToLoad, extensionSectionOptions, usedKeyboards, usedMice, displayTemplates, usedDisplayTemplates, validKeyboards, validMice, cmdArgVal, sliBridges, usedSLIBridge))
 	{
 		cerr << "Improper configuration specified. Cannot continue!" << endl;
 		return(-1);
@@ -2819,7 +3131,9 @@ int main(int argc, char** argv)
 				exit(-1);
 			}
 			fclose(fp);
+			//cout << "Created file for " << thisDisplay.name << " = " << filename<< endl;
 			thisDisplay.edidFile = filename;
+			setDisplay(displayTemplates, thisDisplay);
 			// record the fact that we created this file
 			createdEdidFiles.push_back(filename);
 		}

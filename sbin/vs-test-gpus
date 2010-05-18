@@ -22,10 +22,12 @@ vs-test-gpus : Tool to test GPUs on a vizstack system
 """
 
 import sys
+sys.path.append('/opt/vizstack/python')
 import os
 import time
 from optparse import OptionParser
 from vsapi import Server, VizError, GPU, Screen, ResourceAccess, VizNode, extractObjects
+from pprint import pprint
 
 def test_local_gpu():
 	noErrors = True
@@ -69,7 +71,19 @@ def test_gpu(ra, gpu, showMessages=False, shell=False):
 	allocGPU = allRes[0][1]
 
 	scr = Screen(0)
-	scr.setFBProperty('resolution',[1024,768])
+
+	# If the GPU is attached to display devices, then use them.
+	# If the GPU is _not_attached to display device(s), then
+	#  - if the GPU supports noscanout, then setup a virtual GB
+	#  - if the GPU does not support noscanout, then
+	#    setup a display device on the first available port
+	if len(allocGPU.getScanouts())==0:
+		if allocGPU.getAllowNoScanOut():
+			scr.setFBProperty('resolution',[1024,768])
+		else:
+			sc = allocGPU.getScanoutCaps()
+			allocGPU.setScanout(0, 'HP LP2065', sc[0][0])
+
 	scr.setGPU(allocGPU)
 	allocSrv.addScreen(scr)
 
@@ -79,7 +93,7 @@ def test_gpu(ra, gpu, showMessages=False, shell=False):
 	try:
 		alloc.startViz(ra, suppressMessages=(not showMessages))
 	except VizError, e:
-		print >>sys.stderr, "ERROR: Failed to start X server for %s. "%(identify_gpu(gpu), gpu.getHostName())
+		print >>sys.stderr, "ERROR: Failed to start X server for %s. "%(identify_gpu(gpu))
 		if not showMessages:
 			print >>sys.stderr, "Run this command with the verbose option, -v to see what could be going wrong."
 		return False

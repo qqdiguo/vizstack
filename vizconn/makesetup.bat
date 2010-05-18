@@ -20,5 +20,5 @@ rmdir /S /Q build
 rmdir /S /Q dist
 python setup.py py2exe
 "C:\Program Files\Inno Setup 5\iscc.exe" vizconn.iss
-ren setup.exe VizStackRemoteAccessSetup-1.0-2.exe
+move setup.exe VizStackRemoteAccessSetup-1.1-0.exe
 

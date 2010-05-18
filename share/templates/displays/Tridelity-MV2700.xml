@@ -53,14 +53,14 @@ definition.
 
 -->
 
-<displayconfig 
+<display
  xmlns="http://www.hp.com"
  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
  xsi:schemaLocation="http://www.hp.com /opt/vizstack/share/schema/displayconfig.xsd" >
-	<model>MV2700</model>
-	<vendor>Tridelity</vendor>
+	<model>Tridelity MV2700</model>
 	<input>digital</input>
 	<edid>/opt/vizstack/share/templates/displays/edids/Tridelity-MV2700.bin</edid>
+	<edid_name>Samsung SyncMaster</edid_name>
 	<default_mode>1920x1200_60</default_mode>
 	<mode>
 		<type>edid</type>
@@ -70,4 +70,4 @@ definition.
 		<height>1200</height>
 		<refresh>60</refresh>
 	</mode>
-</displayconfig>
+</display>

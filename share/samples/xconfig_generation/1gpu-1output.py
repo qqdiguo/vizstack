@@ -47,7 +47,7 @@ import sys
 # Create & configure GPU. Index can range from 0-(n-1) where
 # n is the number of GPUs on this machine.
 gpu = vsapi.GPU(0)
-gpu.setScanout(0, "LP2065") # LP2065 connected to port 0
+gpu.setScanout(0, "HP LP2065") # LP2065 connected to port 0
 # If you need the other output, comment out the following line
 # This will configure the 
 #gpu.setScanout(1, "LP2065", outputX=1600)

@@ -29,6 +29,11 @@ graphical VizStack Remote Access tools.
 
 OPTIONS
 -------
+*-x, --exclusive*::
+    Request exclusive access to a GPU. By default, a shared GPU is allocated.
+    Use this option to run GPU-intensive applications or for purposes like
+    benchmarking.
+
 *-g, --geometry*='GEOMETRY'::
     The resolution to run the desktop at. This can be any '<width>x<height>'
     formatted value. The geometry does not need to match any display device 

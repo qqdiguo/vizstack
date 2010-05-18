@@ -19,7 +19,10 @@
 # Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
 
-DEMO_VERSION=1.0
+VV=`grep ^Version: vizstack-opensg-demos.spec | sed -e "s/Version: //"`
+VR=`grep ^Release: vizstack-opensg-demos.spec | sed -e "s/Release: //"`
+DEMO_VERSION=$VV
+DEMO_VERSION_COMPLETE=$VV-$VR
 
 if test -f /etc/SuSE-release ;
 then
@@ -28,13 +31,22 @@ then
 fi
 if test -f /etc/redhat-release;
 then
-    DISTRO=redhat
-    RPM_PATH=/usr/src/redhat
+    if grep Fedora /etc/redhat-release
+    then
+        echo "Fedora"
+        DISTRO=fedora
+        RPM_PATH=~/rpmbuild
+    else
+        echo "RedHat EL"
+        DISTRO=redhat
+        RPM_PATH=/usr/src/redhat
+    fi
 fi
 if test -f /etc/debian_version;
 then
     DISTRO=debian
-    RPM_PATH=/usr/src/rpm
+    #RPM_PATH=/usr/src/rpm
+    RPM_PATH=~/rpmbuild
 fi
 
 # Build the target directory structure we need
@@ -47,13 +59,30 @@ cp -r OpenSG /tmp/vizstack-opensg-demos-tmp/vizstack-opensg-demos-${DEMO_VERSION
 
 # Build the source code, resulting in a populated bin directory
 make -C /tmp/vizstack-opensg-demos-tmp/vizstack-opensg-demos-${DEMO_VERSION}/opt/vizstack/share/demos/OpenSG/src
+if [ "$?" -ne "0" ]
+then
+	echo "============================="
+	echo "FATAL: Code build failed"
+	echo "============================="
+	exit 1
+fi
 
 # Remove subversion information from the packaging tree
 find /tmp/vizstack-opensg-demos-tmp -type d -name ".svn" | xargs rm -rf
 
 # Last steps to build the RPM
 cp vizstack-opensg-demos.spec ${RPM_PATH}/SPECS
-cd /tmp/vizstack-opensg-demos-tmp
+pushd /tmp/vizstack-opensg-demos-tmp
 tar -zcvf vizstack-opensg-demos-${DEMO_VERSION}.tar.gz vizstack-opensg-demos-${DEMO_VERSION}
 cp vizstack-opensg-demos-${DEMO_VERSION}.tar.gz ${RPM_PATH}/SOURCES
 rpmbuild -ba ${RPM_PATH}/SPECS/vizstack-opensg-demos.spec
+popd
+
+THISRPM=vizstack-opensg-demos-${DEMO_VERSION_COMPLETE}.`uname -m`.rpm
+if test "$DISTRO" == "debian"; then
+	echo "Converting RPM to DEB. DEB packages will be in the current directory"
+	fakeroot alien $RPM_PATH/RPMS/`uname -m`/$THISRPM
+else
+	echo "Copying generated RPMS to the current directory"
+	cp $RPM_PATH/RPMS/`uname -m`/$THISRPM .
+fi

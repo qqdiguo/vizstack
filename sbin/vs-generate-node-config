@@ -30,6 +30,7 @@ Expects to run as root.
 
 import os
 import sys
+sys.path.append('/opt/vizstack/python') # this path contains our python modules
 import time
 import socket
 import re
@@ -37,6 +38,10 @@ from pprint import pprint
 import pickle
 from optparse import OptionParser
 import shutil
+import vsapi
+import vsutil
+import string
+import subprocess
 
 handeditCheckFileName = '/etc/vizstack/.autoconfig_checksum'
 outMasterFileName = '/etc/vizstack/master_config.xml'
@@ -117,6 +122,36 @@ Next, use gethostbyaddress to find the hostname corresponding to the IP address.
 
 	return [hostName, external_ip]
 
+def parse_gpuInfo(inFile):
+	boardNameLines = getOutput("grep BoardName %s"%(inFile))
+	busIdLines = getOutput("grep BusID %s"%(inFile))
+	boardNames = []
+	gpuInfo = {}
+	for gpuIndex in range(len(boardNameLines)):
+		line = boardNameLines[gpuIndex]
+		index1 = line.index('"')+1
+		index2 = line.index('"', index1)
+		boardName = line[index1:index2]
+
+		gpuInfo[gpuIndex]={}
+		gpuInfo[gpuIndex]['type']=boardName
+		gpuInfo[gpuIndex]['index']=gpuIndex
+		gpuInfo[gpuIndex]['vendor']="NVIDIA Corporation"
+		try:
+			line = busIdLines[gpuIndex]
+			index1 = line.index('"')+1
+			index2 = line.index('"', index1)
+			busId = line[index1:index2]
+			gpuInfo[gpuIndex]['BusID']=busId
+		except:
+			# If there is only one graphics card, then
+			# we will end up here. Mark this value as
+			# not available so that we can fill it in
+			# later
+			gpuInfo[gpuIndex]['BusID']=None
+
+	return gpuInfo
+
 temp_xconfig = "/tmp/.vgnc-xorg.conf"
 temp_doutput = "/tmp/.vgnc-doutput"
 
@@ -136,6 +171,28 @@ def runSystem(cmd, suppressOutput=True):
 		finalCmd = finalCmd + ">/dev/null 2>/dev/null"
 
 	return os.system(finalCmd)
+
+def runSystemTimed(cmd, timeout, suppressOutput=True):
+	cmd_list = cmd.split(" ")
+
+	if suppressOutput:
+		output = open('/dev/null','w')
+	else:
+		output = None
+
+	startTime = time.time()
+	proc = subprocess.Popen(cmd_list, stdout=output, stderr=output)
+	while True:
+		time.sleep(1)
+		proc.poll()
+		if proc.returncode is not None:
+			return proc.returncode
+		endTime = time.time()
+		if (endTime-startTime)>=timeout:
+			os.kill(proc.pid, 9)
+			return None
+
+	return proc.returncode
 
 def getOutput(cmd):
 	f = os.popen(cmd, "r")
@@ -157,7 +214,8 @@ This tool is meant for internal usage from the tool 'vs-configure-system'. Manua
 parser.add_option("-M", "--master", dest="master", help="Specify the master node.")
 parser.add_option("-p", "--master-port", dest="master_port", help="Specify the master port.")
 parser.add_option("-o", "--overwrite-suffix", dest="overwrite_suffix", help="Use this option to specify the overwrite suffix for the files that will be backed up.")
-parser.add_option("-r", "--remote-network", dest="remote_network", help="Use this option to specify the metmask of the interface that you want to use for HP RGS(Remote Graphics Software) or TurboVNC connections. The value needs to be in a.b.c.d notation, typically with trailing zeros. E.g., 15.146.228.0 or 192.168.1.0, etc")
+parser.add_option("-r", "--remote-network", dest="remote_network", help="Use this option to specify the network of the interface that you want to use for HP RGS(Remote Graphics Software) or TurboVNC connections. The value needs to be in a.b.c.d notation, typically with trailing zeros. E.g., 15.146.228.0 or 192.168.1.0, etc")
+parser.add_option("-f", "--fast-network", dest="fast_network", help="Use this option to specify the network of the interface that you want to use as a fast data network. This value needs to be in a.b.c.d notation, typically with trailing zeros. E.g., 192.168.2.0, 172.22.0.0 etc. This network is typically local to a cluster and is configured to use a fast network like InfiniBand.")
 parser.add_option("--recurse", action="store_true", default=False, dest="recurse", help="This option is for use by this tool itself. Avoid its usage from the command line.")
 
 (options, cmdArgs) = parser.parse_args(sys.argv[1:])
@@ -186,7 +244,6 @@ if options.recurse == False:
 	# address and a warning
 	remoteHost = None
 	remoteIP = None
-
 	if options.remote_network is not None:
 		[remoteHost, remoteIP] = getRemoteHostDetails(options.remote_network)
 		if remoteIP is None:
@@ -198,59 +255,337 @@ if options.recurse == False:
 			remoteHost = socket.gethostname()
 			remoteIP = socket.gethostbyname(remoteHost)
 		except socket.error, e:
-			showError("Failed to determine remote access details for network. Reason : %s"%(str(e)))
-	
+			showError("Failed to determine default network information. Reason : %s"%(str(e)))
+
+	fastHost = None
+	fastIP = None
+	if options.fast_network is not None:	
+		[fastHost, fastIP] = getRemoteHostDetails(options.fast_network)
+		if fastIP is None:
+			exitError("Failed to find the network information corresponding to the fast network.")
+	else:
+		try:
+			fastHost = socket.gethostname()
+			fastIP = socket.gethostbyname(fastHost)
+		except socket.error, e:
+			showError("Failed to determine default network information. Reason : %s"%(str(e)))
+
 	unlink_temp()
 
 	# Generate a configuration file for all GPUs
 	# Use a dummy file as input to prevent nvidia-xconfig from being influenced
 	# by /etc/X11/xorg.conf
 
-
-	# First run with scanout. 
-	ret = runSystem("nvidia-xconfig -c non-existing-file -a --twinview -o %s"%(temp_xconfig))
+	# Let nvidia-xconfig detect all GPUs.
+	ret = runSystem("nvidia-xconfig -c non-existing-file -a -o %s"%(temp_xconfig))
 	if ret != 0:
 		exitError("Failed to generate temporary configuration file. Please ensure that you have installed the nVidia driver on this node.")
+	# If we came here, then the config file will have one entry for 
+	# each GPU device; we will get both the type of GPU and the BusID.
+	# This works for GeForce cards, QuadroPlexes, Quadro Cards and Tesla	
+	gpuInfo = parse_gpuInfo(temp_xconfig)
+
+	if len(gpuInfo)==0:
+		exitError("No GPUs found. Please chech whether the installed version of the nvidia driver is suitable for use with this software.")
+
+	# Reorder the GPUs by ascending PCI id ...
+	# This matches the hardware level
+	gpuIndices = gpuInfo.keys()
+	gpuIndices.sort(lambda x,y:int(gpuInfo[x]['BusID'].split(":")[1])-int(gpuInfo[y]['BusID'].split(":")[1]))
+	newGPUInfo = {}
+	for idx in range(len(gpuIndices)):
+		newGPUInfo[idx] = gpuInfo[gpuIndices[idx]]
+	gpuInfo = newGPUInfo
+
+	# Generate a dummy node configuration file and dummy GPU template
+	# this will help us generate the X configuration files we need to run
+	# X servers - which in turn will help us discover information about the
+	# GPU
+	dummy_dir = '/tmp/temp-vs-configure-system'
+	try:
+		os.mkdir(dummy_dir)
+	except OSError, e:
+		pass
+
+	dummy_gpu_templates_dir = '%s/gpus'%(dummy_dir)
+	try:
+		os.mkdir(dummy_gpu_templates_dir)
+	except OSError, e:
+		pass
+
+	dummy_gpu_template_file = '%s/gpus/test-gpu.xml'%(dummy_dir)
+	dummy_gpu = open(dummy_gpu_template_file, 'w')
+	print >>dummy_gpu, """<?xml version="1.0" ?>
+<gpu
+ xmlns="http://www.hp.com"
+ xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+ xsi:schemaLocation="http://www.hp.com /opt/vizstack/share/schema/gpuconfig.xsd">
+                <model>Test GPU</model>
+                <vendor>Test</vendor>
+                <pci_device_id>0</pci_device_id>
+                <pci_vendor_id>0</pci_vendor_id>
+                <scanout_caps>
+                        <index>0</index>
+                        <type>digital</type>
+                        <type>analog</type>
+                </scanout_caps>
+                <scanout_caps>
+                        <index>1</index>
+                        <type>digital</type>
+                        <type>analog</type>
+                </scanout_caps>
+                <scanout_caps>
+                        <index>2</index>
+                        <type>digital</type>
+                        <type>analog</type>
+                </scanout_caps>
+                <scanout_caps>
+                        <index>3</index>
+                        <type>digital</type>
+                        <type>analog</type>
+                </scanout_caps>
+                <limits>
+                        <max_width>4096</max_width>
+                        <max_height>4096</max_height>
+                </limits>
+
+</gpu>"""
+	dummy_gpu.close()
+
+	dummy_node_config = '%s/dummy-node-config.xml'%(dummy_dir)
+	dummy_node = open(dummy_node_config,"w")
+	print >>dummy_node, """<?xml version="1.0" ?>
+<nodeconfig
+ xmlns="http://www.hp.com"
+ xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+ xsi:schemaLocation="http://www.hp.com /opt/vizstack/share/schema/nodeconfig.xsd" >
+	<nodes>
+		<node>
+			<hostname>localhost</hostname>
+			<model>test</model>"""
+	for gpuIndex in gpuInfo.keys():
+		print >>dummy_node, """
+			<gpu>
+				<index>%d</index>"""%(gpuIndex)
+		if gpuInfo[gpuIndex]['BusID'] is not None:
+			print >>dummy_node, """
+				<busID>%s</busID>"""%(gpuInfo[gpuIndex]['BusID'])
+		print >>dummy_node, """
+				<model>Test GPU</model>
+				<useScanOut>1</useScanOut>
+			</gpu>"""
+	print >>dummy_node, """
+		</node>
+	</nodes>
+</nodeconfig>"""
+	dummy_node.close()
+
+	input_path = '%s/testserver.xml'%(dummy_dir)
+	output_path = '%s/testserver.conf'%(dummy_dir)
+	edid_output_prefix = '%s/edid'%(dummy_dir)
+	temp_result_file = '%s/temp-result-file'%(dummy_dir)
+
+	allDisplays = []
+	# Loop through all GPUs, finding out
+	#  - if the GPU supports "noscanout"
+	#  - which display output ports exist on the GPU
+	#    - which of VGA, DVI supported on each 
+	#  - maximum framebuffer dimensions
+	for gpuIndex in gpuInfo.keys():
+		#print 'Testing GPU %s at %s'%(gpuInfo[gpuIndex]['type'],gpuInfo[gpuIndex]['BusID'])
+
+		srv = vsapi.Server(0)
+		scr = vsapi.Screen(0)
+		gpu = vsapi.GPU(gpuIndex)
+		scr.setFBProperty('resolution', [1024,768])
+		scr.setGPU(gpu)
+		srv.addScreen(scr)
+
+		input_file = open(input_path, 'w')
+		print >>input_file, srv.serializeToXML()
+		input_file.close()
+		
+		cmd = "/opt/vizstack/bin/vs-generate-xconfig --edid-output-prefix=%s --nodeconfig=%s --no-ssm --templatedir=%s --input=%s --output=%s"%(edid_output_prefix, dummy_node_config, dummy_dir, input_path, output_path)
+		ret = runSystem(cmd)
+		if ret != 0:
+			exitError("Failed to generate temporary configuration file for getting GPU information.")
+
+		# With certain versions of the nvidia driver, I have seen that xinit doesn't work
+		# This check is for the first time the X server is used. If this exits, so will other instances.
+		# We use a timeout of 30 secs. Typically, the X server will not run more than a few seconds.
+		ret = runSystemTimed("xinit /opt/vizstack/bin/vs-get-limits %s -- -logverbose 6 -config %s"%(temp_result_file, output_path), timeout=30)
+		if ret is None:
+			os.system("killall -9 X 2>/dev/null") # Kill all running X servers
+			os.system("killall -9 Xorg 2>/dev/null")
+			exitError("""
+Abnormal X server behaviour. This script need to start/stop the X server many times. 
+In this case, the X server has not exited even after 30 seconds. This typically happens
+if the nvidia driver you have installed is not suitable for VizStack. Please upgrade/
+downgrade the nvidia driver and retry running this script.
+""")
+		gpuInfo[gpuIndex]['scanouts'] = {}
+		if ret == 0:
+			info = vsutil.parseXLogFile()
+			# Get display info from log file
+			for disp in info['connected_displays']:
+				displayDevice = disp['display_device']
+				portIndex = int(disp['port_index'])
+				portType = disp['output_type']
+				if portType == 'DFP':
+					portType = 'digital'
+				elif portType == 'CRT':
+					portType = 'analog'
+				else:
+					exitError("Invalid port type '%s'"%(portType))
+				gpuInfo[gpuIndex]['scanouts'][portIndex]={'type':portType, 'display_device': displayDevice}
+				# Add the display to our list
+				allDisplays.append(disp['display_template'])
+		else:
+			# I am expecting that control will come here if GeForce card(s)
+			# are present in the system, and are not connected to display
+			# devices. nvidia changed the behaviour of their drivers to
+			# not assume CRT-0 as the default display device if nothing is
+			# connected, but that reasoning doesn't seem to be true on
+			# GeForce cards yet !
+			#
+			# So, our code won't come here. To prevent failure if it does
+			# come here any day, here's what I'll do !
+			# I explicitly set up a DFP to ensure I get the server to start
+			# Only very old cards don't support DVI, so many cards will work
+			# If the first digital try fails, we will try with an analog
+			# to tackle these cases
+			serverStarted = False
+			for outType in ['digital', 'analog']:
+				srv = vsapi.Server(0)
+				scr = vsapi.Screen(0)
+				gpu = vsapi.GPU(gpuIndex)
+				gpu.setScanout(1, "Generic DFP Monitor", scan_type=outType)
+				scr.setGPU(gpu)
+				srv.addScreen(scr)
+
+				input_file = open(input_path, 'w')
+				print >>input_file, srv.serializeToXML()
+				input_file.close()
+
+				ret = runSystem("/opt/vizstack/bin/vs-generate-xconfig --edid-output-prefix=%s --nodeconfig=%s --no-ssm --templatedir=%s --input=%s --output=%s"%(edid_output_prefix, dummy_node_config, dummy_dir, input_path, output_path))
+				if ret != 0:
+					exitError("Failed to generate temporary configuration file for getting GPU information.")
+
+				ret = runSystem("xinit /opt/vizstack/bin/vs-get-limits %s -- -logverbose 6 -config %s"%(temp_result_file, output_path))
+				if ret==0:
+					serverStarted = True
+					break
+			if not serverStarted:
+				exitError("Failed to start X server")
+			info = vsutil.parseXLogFile()
+
+		supportedScanouts = {}
+		if len(info['possible_scanouts'])>0:
+			# pick the first one since we started the X server for one GPU
+			allPortScanouts = info['possible_scanouts'][0]['scanouts']
+			stMap = {'DFP':'digital','CRT':'analog'}
+			for portIndex in allPortScanouts.keys():
+				typesToCheck = allPortScanouts[portIndex]
+				supportedTypes = []
+				for scanType in typesToCheck:
+					if scanType not in stMap.keys():
+						# We ignore input types like "TV" !
+						continue
+					#print 'checking %s-%d'%(scanType, portIndex)
+					srv = vsapi.Server(0)
+					scr = vsapi.Screen(0)
+					gpu = vsapi.GPU(gpuIndex)
+					try:
+						# Note: we setup an LP2065
+						# Why ? vsutil.parseXLogFile returns a display as a connected
+						# display only if gets an EDID for it. No displays which don't
+						# have an EDID are returned. So, I am forced to use a monitor	
+						# that forces an EDID
+						gpu.setScanout(portIndex, "HP LP2065", scan_type=stMap[scanType])
+					except ValueError, e:
+						continue
+					scr.setGPU(gpu)
+					srv.addScreen(scr)
+
+					input_file = open(input_path, 'w')
+					print >>input_file, srv.serializeToXML()
+					input_file.close()
+
+					ret = runSystem("/opt/vizstack/bin/vs-generate-xconfig --edid-output-prefix=%s --nodeconfig=%s --no-ssm --templatedir=%s --input=%s --output=%s"%(edid_output_prefix, dummy_node_config, dummy_dir, input_path, output_path))
+					if ret != 0:
+						exitError("Failed to generate temporary configuration file for getting GPU information.")
+
+					ret = runSystem("xinit /opt/vizstack/bin/vs-get-limits %s -- -logverbose 6 -config %s"%(temp_result_file, output_path))
+					if ret !=0:
+						exitError("Failed to start X server")
+					info2 = vsutil.parseXLogFile()
+					connDisplays = info2['connected_displays']
+					if len(connDisplays)==1:
+						ret_type = connDisplays[0]['output_type']
+						ret_pi = connDisplays[0]['port_index']
+						if (ret_type == scanType) and (ret_pi == portIndex):
+							supportedTypes.append(stMap[scanType])
+				if len(supportedTypes)>0:
+					supportedScanouts[portIndex] = supportedTypes
+
+		# Get the limit data now. At-least one of the X server starts above would
+		# have worked, and we'll have our data
+		try:
+			limitData = open(temp_result_file,'r').read()
+			limitData = limitData.lstrip().rstrip().split(' ')
+		except:
+			# This exception can happen only if GLX is not available
+			# Definitely a driver setup issue. We could fail here
+			# However, we choose a generic value like 4096x4096 for
+			# the framebuffer. This allows one user to continue with
+			# the configuration at the moment.
+			#
+			# FIXME: we need to at-least warn the user
+			#
+			limitData = [ 4096, 4096 ]
+			
+		gpuInfo[gpuIndex]['limits']=map(lambda x:int(x), limitData)
+
+		if len(supportedScanouts)>0:
+			gpuInfo[gpuIndex]['has_scanout'] = True
+		else:
+			gpuInfo[gpuIndex]['has_scanout'] = False
+
+		gpuInfo[gpuIndex]['scanoutCaps']=supportedScanouts
+
+	gpuOb = {}
+	for gpuIndex in gpuInfo.keys():
+		thisGPU = vsapi.GPU(resIndex = gpuIndex, model=gpuInfo[gpuIndex]['type'], busID=gpuInfo[gpuIndex]['BusID'], useScanOut=gpuInfo[gpuIndex]['has_scanout'])
+		for portIndex in gpuInfo[gpuIndex]['scanoutCaps'].keys():
+			for outputType in gpuInfo[gpuIndex]['scanoutCaps'][portIndex]:
+				thisGPU.addScanoutCap(portIndex, outputType)
+		scDesc = gpuInfo[gpuIndex]['scanouts']
+		for portIndex in scDesc.keys():
+			thisGPU.setScanout(portIndex, scDesc[portIndex]['display_device'], scDesc[portIndex]['type'])
+		thisGPU.setMaxFBWidth(gpuInfo[gpuIndex]['limits'][0])
+		thisGPU.setMaxFBHeight(gpuInfo[gpuIndex]['limits'][1])
+		thisGPU.setVendor(gpuInfo[gpuIndex]['vendor'])
+		# By default, no stereo
+		thisGPU.setAllowStereo(False)
+		# GeForce GPUs don't allow noscanout
+		if gpuInfo[gpuIndex]['type'].find('GeForce')!=-1:
+			thisGPU.setAllowNoScanOut(False)
+		else:
+			if thisGPU.getScanoutCaps() is not None:
+				# Stereo on QuadroFX cards
+				thisGPU.setAllowStereo(True)
+			thisGPU.setAllowNoScanOut(True)
+		gpuOb[gpuIndex] = thisGPU
+
+	#pprint(gpuInfo)
 
 	if options.overwrite_suffix is not None:
 		extraOpts = "--overwrite-suffix %s "%(options.overwrite_suffix)
 	else:
 		extraOpts = ""
 
-	# Call ourselves recursively in the context of a running X server
-	# This will fail if all GPUs are scanout GPUs
-	retCode = runSystem("xinit %s --recurse %s %s -- -config %s -logverbose 6"%
-	               (os.path.join(os.getcwd(),sys.argv[0]), extraOpts, temp_doutput, temp_xconfig))
-
-	if retCode == 0:
-		# Get got the nvidia related configuration
-		infofile = open(temp_doutput, "rb")
-		gpuInfo = pickle.load(infofile)
-		infofile.close()
-	else:
-		# Try use a no scanout technique. This will detect all GPUs irrespective of whether they have scanout or not
-		ret = runSystem("nvidia-xconfig -c non-existing-file -a --virtual=1024x768 --use-display-device=none -o %s"%(temp_xconfig))
-		if ret != 0:
-			exitError("Failed to generate temporary configuration file. Please ensure that you have installed the nVidia driver on this node.")
-
-		# Call ourselves recursively in the context of a running X server
-		retCode = runSystem("xinit %s --recurse %s %s -- -config %s -logverbose 6"%
-			       (os.path.join(os.getcwd(),sys.argv[0]), extraOpts, temp_doutput, temp_xconfig))
-
-		if retCode != 0:
-			# The most likely case why we'd come here would be if the power connectors were not inserted.
-			# FIXME: parse the log file /var/log/Xorg.0.log and attempt to find what went wrong
-			exitError("Failed to detect and generate configuration for this node %s"%(socket.gethostname()))
-
-		# Get the nvidia related configuration
-		infofile = open(temp_doutput, "rb")
-		gpuInfo = pickle.load(infofile)
-		infofile.close()
-
-	if len(gpuInfo)==0:
-		exitError("No GPUs found. Please chech whether the installed version of the nvidia driver is suitable for use with this software.")
-
 	# Cleanup the temporary files
+	# FIXME: remove the other temporary files as well
 	unlink_temp()
 
 	# Find out the HP machine model
@@ -265,16 +600,6 @@ if options.recurse == False:
 	lines = getOutput('dmidecode | grep "Product Name:" | sed -e "s/.*Product Name: //" ')
 	machine_model = lines[0].rstrip() # first item, remove leading and trailing whitespace
 	
-
-	# Reorder the GPUs by ascending PCI id ...
-	# This matches the hardware level
-	gpuIndices = gpuInfo.keys()
-	gpuIndices.sort(lambda x,y:int(gpuInfo[x]['BusID'].split(":")[1])-int(gpuInfo[y]['BusID'].split(":")[1]))
-	newGPUInfo = {}
-	for idx in range(len(gpuIndices)):
-		newGPUInfo[idx] = gpuInfo[gpuIndices[idx]]
-	gpuInfo = newGPUInfo
-
 	didFileBackup = False
 
 	# May need to overwrite files if we're not excluded
@@ -292,7 +617,7 @@ if options.recurse == False:
 				doBackup = False
 
 		if doBackup:
-			for fileName in [outMasterFileName, outNodeFileName]:
+			for fileName in [outMasterFileName]:
 				try:
 					os.stat(fileName)
 					shutil.copy2(fileName, fileName+options.overwrite_suffix)
@@ -302,24 +627,29 @@ if options.recurse == False:
 		
 	# generate the XML
 	msg_header = "<node>\n"
-	msg = "\t<name>%s</name>\n"%(socket.gethostname())
+	msg = "\t<hostname>%s</hostname>\n"%(socket.gethostname())
 	msg += "\t<model>%s</model>\n"%(machine_model)
 	# include remote access info if needed
 	# FIXME: need to check if any remote packages are installed ??
+	msg +="\t<properties>\n"
 	if (remoteHost is not None) or (remoteIP is not None):
-		msg +="\t<properties>\n"
 		if remoteHost is not None:
 			msg += "\t\t<remote_hostname>%s</remote_hostname>\n"%(remoteHost)
 		else:
 			msg += "\t\t<remote_hostname>%s</remote_hostname>\n"%(remoteIP)
-		msg +="\t</properties>\n"
-	for idx in range(len(gpuIndices)):
-		msg += "\t<gpu>\n"
-		msg += "\t\t<index>%d</index>\n"%(idx)
-		msg += "\t\t<bus_id>%s</bus_id>\n"%(gpuInfo[idx]["BusID"])
-		msg += "\t\t<type>%s</type>\n"%(gpuInfo[idx]["type"])
-		msg += "\t\t<useScanOut>%s</useScanOut>\n"%(gpuInfo[idx]["has_scanout"]) # If has_scanout is 1, then scanout is enabled on the GPU
-		msg += "\t</gpu>\n"
+	if (fastHost is not None) or (fastIP is not None):
+		if fastHost is not None:
+			msg += "\t\t<fast_network>%s</fast_network>\n"%(fastHost)
+		else:
+			msg += "\t\t<fast_network>%s</fast_network>\n"%(fastIP)
+	msg +="\t</properties>\n"
+	# Info about GPUs
+	for idx in gpuOb.keys():
+		msg += gpuOb[idx].serializeToXML()
+		msg += "\n"
+	# Info about displays
+	for dd in allDisplays:
+		msg += dd.serializeToXML()
 	# Define a default keyboard
 	msg += "\t<keyboard>\n"
 	msg += "\t\t<index>0</index>\n"
@@ -334,10 +664,10 @@ if options.recurse == False:
 
 	# Print out the XML for the master
 	print msg_header
-	if didFileBackup:
-		print "\r<didOverwrite>1</didOverwrite>"
-	else:
-		print "\r<didOverwrite>0</didOverwrite>"
+	# Did we overwrite config file ?
+	print "\t<didOverwrite>%d</didOverwrite>"%(didFileBackup)
+
+	# Rest of the node config
 	print msg
 
 	# If we need to write the configs locally, then do it now
@@ -348,12 +678,6 @@ if options.recurse == False:
 			outMasterFile = open(outMasterFileName, 'w')
 		except IOError, e:
 			print >>sys.stderr, "Failed to create output configuration file '%s'. Reason:%s"%(outMasterFileName, str(e))
-			sys.exit(-1)
-
-		try:
-			outNodeFile = open(outNodeFileName, 'w')
-		except IOError, e:
-			print >>sys.stderr, "Failed to create output configuration file '%s'. Reason:%s"%(outNodeFileName, str(e))
 			sys.exit(-1)
 
 		# Write out the master information
@@ -371,27 +695,8 @@ if options.recurse == False:
 </masterconfig>
 """%(options.master, options.master_port, "Munge")
 
-		# Write out this node's configuration. 
-		# FIXME: this is not complete, as in
-		# the X server information isn't written out. But that's not a problem.
-		print >>outNodeFile, """<?xml version="1.0" ?>
-<nodeconfig
- xmlns="http://www.hp.com"
- xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
- xsi:schemaLocation="http://www.hp.com /opt/vizstack/share/schema/nodeconfig.xsd" >"""
-		print >>outNodeFile, "\t<nodes>"
-		print >>outNodeFile, "\t"+msg_header
-		for line in msg.split("\n"):
-			print >>outNodeFile, "\t"+line
-		print >>outNodeFile, "\t</nodes>"
-		print >>outNodeFile, "\t</nodeconfig>"
-	
-		# Close the files we created
-		outMasterFile.close()
-		outNodeFile.close()
-
-		# Maintain a checksum of the new files!
-		if os.system("md5sum %s %s > %s"%(outMasterFileName, outNodeFileName, handeditCheckFileName))!=0:
+		# Maintain a checksum of the new file!
+		if os.system("md5sum %s > %s"%(outMasterFileName, handeditCheckFileName))!=0:
 			try:
 				os.unlink(handeditCheckFileName)
 			except OSError, e:
@@ -402,6 +707,7 @@ if options.recurse == False:
 
 #
 # We'll come here in the context of a running X server.
+# NOTE XXX -- the code does not come here now !
 #
 # The X server is setup to run on all GPUs the nvidia configurator can find. TwinView is also enabled,
 # so all directly connected (and detected) display devices will power on...
@@ -473,7 +779,8 @@ matchRE = re.compile("^\(II\)[\s].*NVIDIA\(([0-9]+)\):[\s]+NVIDIA GPU (.*)[\s]+a
 # ('Quadro FX 3700 (G92GL)', 'PCI:10:0:0', '0')
 #      Model                    BusID      Index
 #
-for line in open("/var/log/Xorg.0.log","r").readlines():
+srvNumber = 0
+for line in open("/var/log/Xorg.%d.log"%(srvNumber),"r").readlines():
 	ob = matchRE.match(line)
 	if ob is not None:
 		matchParts = ob.groups()

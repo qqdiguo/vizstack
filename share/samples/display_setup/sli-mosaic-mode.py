@@ -19,8 +19,8 @@ gpu1 = res[0][3]
 pprint(res)
 
 scr = vsapi.Screen(0)
-gpu0.setScanout(port_index= 0, display_device="LP2065", outputX=0, outputY=0)
-gpu1.setScanout(port_index= 0, display_device="LP2065", outputX=1600, outputY=0)
+gpu0.setScanout(port_index= 0, display_device="HP LP2065", outputX=0, outputY=0)
+gpu1.setScanout(port_index= 0, display_device="HP LP2065", outputX=1600, outputY=0)
 scr.setGPUs([gpu0, gpu1])
 sli.setMode("mosaic")
 scr.setGPUCombiner(sli)

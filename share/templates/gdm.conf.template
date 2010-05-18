@@ -23,6 +23,8 @@
 #  - The GDM wrapper substitues text in the file
 #     - @@USER@@ is replaced with the username for who GDM is 
 #       being run
+#     - @@UID@@ is replaced with the uid of the user for who GDM is 
+#       being run
 #  - The replaced file is used to start GDM.
 #
 # This makes it absolutely essential to take the gdm.conf that is
@@ -44,7 +46,7 @@
 #  - in the [Server-Standard] section, 
 #      "command=/usr/X11R6/bin/X -audit 0 -br"
 #    is converted to
-#      "command=/usr/X11R6/bin/vs-X -audit 0 -br --rgs-prompt-user"
+#      "command=/usr/X11R6/bin/vs-X -audit 0 -br --rgs-prompt-user --server-for @@UID@@"
 #  - "AllowShutdown" is set to "false" to avoid
 #    showing the Shutdown button if you ever choose to
 #    use the GDM screen. We don't want random users to

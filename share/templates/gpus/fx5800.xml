@@ -12,9 +12,7 @@ The Quadro FX 5800.
  xsi:schemaLocation="http://www.hp.com /opt/vizstack/share/schema/gpuconfig.xsd">
 
 		<model>Quadro FX 5800</model>
-		<vendor>nVidia</vendor>
-		<pci_device_id>05fd</pci_device_id>
-		<pci_vendor_id>10de</pci_vendor_id>
+		<vendor>NVIDIA Corporation</vendor>
 		<scanout_caps> <!-- Port 0 is DVI-I - i.e. capable of both Analog & Digital output -->
 			<index>0</index>
 			<type>digital</type>

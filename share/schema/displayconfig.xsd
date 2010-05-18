@@ -4,14 +4,11 @@ targetNamespace="http://www.hp.com"
 xmlns="http://www.hp.com"
 elementFormDefault="qualified" >
 
-<xs:element name="displayconfig">
+<xs:element name="display">
 	<xs:complexType>
 		<xs:sequence>
-			<!-- Mandatory name comes first. This is the name of the model. -->
+			<!-- Mandatory name comes first. This is the dentifying name of the model. -->
 			<xs:element name="model" type="xs:string" />
-
-			<!-- Next comes vendor -->
-			<xs:element name="vendor" type="xs:string" />
 
 			<!-- 
 
@@ -37,7 +34,12 @@ elementFormDefault="qualified" >
 
 			-->
 			<xs:element name="edid" minOccurs="0" maxOccurs="1" type="xs:string" />
+
+			<!-- If you have the EDID bytes, feel free to use them too! -->
 			<xs:element name="edidBytes" minOccurs="0" maxOccurs="1" type="xs:string" />
+
+			<!-- This name should match the name exposed in the EDID -->
+			<xs:element name="edid_name" type="xs:string" minOccurs="0" maxOccurs="1" />
 
 			<xs:element name="hsync" minOccurs="0" maxOccurs="1" > <!-- If EDID is not specified, the sync value will be used from this -->
 				<xs:complexType>
@@ -57,6 +59,25 @@ elementFormDefault="qualified" >
 				</xs:complexType>
 			</xs:element>
 
+			<xs:element name="dimensions" minOccurs="0" maxOccurs="1"> <!-- physical dimensions of the display -->
+				<xs:complexType>
+					<xs:sequence>
+						<xs:element name="width" type="xs:float" /> <!-- width in mm -->
+						<xs:element name="height" type="xs:float" /> <!-- height in mm -->
+						<xs:element name="bezel" minOccurs="0" maxOccurs="1">
+							<xs:complexType>
+								<xs:sequence>
+									<xs:element name="left" type="xs:float" />
+									<xs:element name="right" type="xs:float" />
+									<xs:element name="bottom" type="xs:float" />
+									<xs:element name="top" type="xs:float" />
+								</xs:sequence>
+							</xs:complexType>
+						</xs:element>
+					</xs:sequence>
+				</xs:complexType>
+			</xs:element>
+
 			<xs:element name="default_mode" type="xs:string" /> <!-- The default mode to choose if none is specified. Must be in the list below -->
 
 			<xs:element name="mode" minOccurs="0" maxOccurs="unbounded" >
@@ -68,6 +89,16 @@ elementFormDefault="qualified" >
 						<xs:element name="height" type="xs:nonNegativeInteger" />
 						<xs:element name="refresh" type="xs:nonNegativeInteger" />
 						<xs:element name="value" type="xs:string" minOccurs="0" maxOccurs="1" /> <!-- value depends on 'type'. Can be a modeline or empty at this point -->
+						<xs:element name="bezel" minOccurs="0" maxOccurs="1"> <!-- per resolution bezel, in pixels -->
+							<xs:complexType>
+								<xs:sequence>
+									<xs:element name="left" type="xs:nonNegativeInteger" /> <!-- note : all values in pixels. Any value specified here will override the computed bezel -->
+									<xs:element name="right" type="xs:nonNegativeInteger" />
+									<xs:element name="bottom" type="xs:nonNegativeInteger" />
+									<xs:element name="top" type="xs:nonNegativeInteger" />
+								</xs:sequence>
+							</xs:complexType>
+						</xs:element>
 					</xs:sequence>
 				</xs:complexType>
 			</xs:element>

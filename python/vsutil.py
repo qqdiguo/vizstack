@@ -30,6 +30,7 @@ import xml
 import domutil
 import copy
 import metascheduler
+import string
 
 def isFrameLockAvailable(resList):
 	"""
@@ -248,7 +249,7 @@ def enableFrameLock(resList):
 	# We suppress all output. If running the window manager fails then a window manager is already running &
 	# there will be no problems.
 	sched = masterServer.getSchedulable()
-	p = sched.run("/usr/bin/env DISPLAY=%s metacity"%(masterServer.getDISPLAY()), stdout=open("/dev/null","w"), stderr=open("/dev/null","w"))
+	p = sched.run(["/usr/bin/env","DISPLAY=%s"%(masterServer.getDISPLAY()),"metacity"], outFile=open("/dev/null","w"), errFile=open("/dev/null","w"))
 	time.sleep(2)
 
 	__set_nvidia_settings(masterServer, '[gpu:%d]/FrameLockTestSignal'%(masterGPUIndex), '1')
@@ -317,18 +318,18 @@ def __encodeDisplay(displayType, port):
 
 def __set_nvidia_settings(xServer, prop,val):
 	sched = xServer.getSchedulable()
-	cmd = '/usr/bin/nvidia-settings --display=%s -a %s=%s'%(xServer.getDISPLAY(), prop,val)
+	cmd = ['/usr/bin/nvidia-settings', '--display=%s'%(xServer.getDISPLAY()), '-a', '%s=%s'%(prop,val)]
 	#print cmd
-	p = sched.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+	p = sched.run(cmd, outFile=subprocess.PIPE, errFile=subprocess.PIPE)
 	p.wait()
 	return p.getExitCode()
 
 def __getGPUDetails(srv, scr, gpuIndex):
 	gpuInfo = {}
 	sched = srv.getSchedulable()
-	cmd = "/usr/bin/nvidia-settings --ctrl-display=%s --display=%s -q [gpu:%d]/EnabledDisplays"%(srv.getDISPLAY(), srv.getDISPLAY(), gpuIndex)
+	cmd = ["/usr/bin/nvidia-settings","--ctrl-display=%s"%(srv.getDISPLAY()), "--display=%s"%(srv.getDISPLAY()), "-q", "[gpu:%d]/EnabledDisplays"%(gpuIndex)]
 	#print cmd
-	p = sched.run(cmd, stdout=subprocess.PIPE)
+	p = sched.run(cmd, outFile=subprocess.PIPE)
 	p.wait()
 	content =  p.getStdOut().split('\n')
 	reobj = re.compile('^Attribute .*: (0x[0-9a-f]+).*$')
@@ -337,8 +338,8 @@ def __getGPUDetails(srv, scr, gpuIndex):
 	mobj=reobj.match(l)
 	outputPortInfo = __decodeMonitorMask(int(mobj.groups(0)[0],16))
 	for portNum in outputPortInfo:
-		cmd = "/usr/bin/nvidia-settings --ctrl-display=%s --display=%s -q [gpu:%d]/RefreshRate3[%s]"%(srv.getDISPLAY(), srv.getDISPLAY(), gpuIndex, outputPortInfo[portNum]['name'])
-		p = sched.run(cmd, stdout=subprocess.PIPE)
+		cmd = ["/usr/bin/nvidia-settings", "--ctrl-display=%s"%(srv.getDISPLAY()),"--display=%s"%(srv.getDISPLAY()),"-q","[gpu:%d]/RefreshRate3[%s]"%(gpuIndex, outputPortInfo[portNum]['name'])]
+		p = sched.run(cmd, outFile=subprocess.PIPE)
 		p.wait()
 		content =  p.getStdOut().split('\n')
 		reobj = re.compile("^Attribute 'RefreshRate3' \(.*\): ([0-9\.]+).*$")
@@ -347,8 +348,8 @@ def __getGPUDetails(srv, scr, gpuIndex):
 		outputPortInfo[portNum]['RefreshRate']=mobj.groups(0)[0]
 	gpuInfo['ports']=outputPortInfo
 
-	cmd = "/usr/bin/nvidia-settings --ctrl-display=%s --display=%s -q [gpu:%d]/FrameLockAvailable"%(srv.getDISPLAY(), srv.getDISPLAY(), gpuIndex)
-	p = sched.run(cmd, stdout=subprocess.PIPE)
+	cmd = ["/usr/bin/nvidia-settings","--ctrl-display=%s"%(srv.getDISPLAY()), "--display=%s"%(srv.getDISPLAY()), "-q", "[gpu:%d]/FrameLockAvailable"%(gpuIndex)]
+	p = sched.run(cmd, outFile=subprocess.PIPE)
 	p.wait()
 	content =  p.getStdOut().split('\n')
 	reobj = re.compile("^Attribute 'FrameLockAvailable' \(.*\): ([0-9\.]+)\..*$")
@@ -362,8 +363,8 @@ def __getGPUDetails(srv, scr, gpuIndex):
 
 	gpuInfo['FrameLockAvailable']=mobj.groups(0)[0]
 
-	cmd = "/usr/bin/nvidia-settings --ctrl-display=%s --display=%s -q FrameLockSyncRate"%(srv.getDISPLAY(), scr.getDISPLAY())
-	p = sched.run(cmd, stdout=subprocess.PIPE)
+	cmd = ["/usr/bin/nvidia-settings","--ctrl-display=%s"%(srv.getDISPLAY()),"--display=%s"%(srv.getDISPLAY()), "-q", "FrameLockSyncRate"]
+	p = sched.run(cmd, outFile=subprocess.PIPE)
 	p.wait()
 	content =  p.getStdOut().split('\n')
 	reobj = re.compile("^Attribute 'FrameLockSyncRate' \(.*\): ([0-9\.]+)\..*$")
@@ -371,8 +372,8 @@ def __getGPUDetails(srv, scr, gpuIndex):
 	mobj=reobj.match(l)
 	gpuInfo['FrameLockSyncRate']=mobj.groups(0)[0]
 
-	cmd = "/usr/bin/nvidia-settings --ctrl-display=%s --display=%s -q [gpu:%d]/FrameLockEnable"%(srv.getDISPLAY(), scr.getDISPLAY(),gpuIndex)
-	p = sched.run(cmd, stdout=subprocess.PIPE)
+	cmd = ["/usr/bin/nvidia-settings", "--ctrl-display=%s"%(srv.getDISPLAY()), "--display=%s"%(srv.getDISPLAY()), "-q", "[gpu:%d]/FrameLockEnable"%(gpuIndex)]
+	p = sched.run(cmd, outFile=subprocess.PIPE)
 	p.wait()
 	content =  p.getStdOut().split('\n')
 	reobj = re.compile("^Attribute 'FrameLockEnable' \(.*\): ([0-9\.]+)\..*$")
@@ -399,8 +400,19 @@ def __getFrameLockChain(resList):
 
 def loadResourceGroups(sysConfig):
 	"""
-	Parse the resource group configuration file & return the resource groups
+	Parse the resource group configuration file & return the resource groups.
+	If the resource group configuration file is missing, then we behave as if no
+	resource groups have been defined.
 	"""
+
+	resgroups = {}
+	# Check if the resource group config file exists
+	# A non existent file will be treated as if there were
+	# no resource groups defined
+	try:
+		os.stat(vsapi.rgConfigFile)
+	except:
+		return resgroups
 	try:
 		dom = minidom.parse(vsapi.rgConfigFile)
 	except xml.parsers.expat.ExpatError, e:
@@ -408,12 +420,18 @@ def loadResourceGroups(sysConfig):
 
 	root_node = dom.getElementsByTagName("resourcegroupconfig")[0]
 	rgNodes = domutil.getChildNodes(root_node,"resourceGroup")
-	resgroups = {}
 	for node in rgNodes:
 		obj = vsapi.ResourceGroup()
-		obj.deserializeFromXML(node)
 		try:
-			obj.doValidate(sysConfig['templates']['display_device'].values())
+			obj.deserializeFromXML(node)
+		except ValueError, e:
+			raise VizError(VizError.BAD_CONFIGURATION, "FATAL: Error loading Resource Group '%s'. Reason: %s"%(obj.getName(), str(e)))
+
+		# Normalize to paste hostnames where needed. This will make it easier to script tools!
+		obj = normalizeRG(obj)
+
+		try:
+			obj.doValidate(sysConfig['templates']['display'].values())
 		except ValueError, e:
 			raise VizError(VizError.BAD_CONFIGURATION, "FATAL: Error validating Resource Group '%s'. Reason: %s"%(obj.getName(),str(e)))
 
@@ -424,13 +442,13 @@ def loadResourceGroups(sysConfig):
 		resgroups[newResGrp] = obj
 	return resgroups
 
-def loadLocalConfig():
+def loadLocalConfig(onlyTemplates=False):
 	"""
-	Load the local system configuration
+	Load the local system configuration. Can load templates only, if needed.
 	"""
 
 	sysConfig = {
-		'templates' : { 'gpu' : {} , 'display_device' : {}, 'keyboards' : {}, 'mice' : {}  }, 
+		'templates' : { 'gpu' : {} , 'display' : {}, 'keyboard' : {}, 'mouse' : {}  }, 
 		'nodes' : {},
 		'resource_groups' : {}
 	}
@@ -462,7 +480,7 @@ def loadLocalConfig():
 			raise VizError(VizError.BAD_CONFIGURATION, "Failed to parse XML file '%s'. Reason: %s"%(fname, str(e)))
 
 		newObj = vsapi.deserializeVizResource(dom.documentElement, [vsapi.DisplayDevice])	
-		sysConfig['templates']['display_device'][newObj.getType()] = newObj
+		sysConfig['templates']['display'][newObj.getType()] = newObj
 
 	# Keyboard templates
 	fileList = glob('/opt/vizstack/share/templates/keyboard/*.xml')
@@ -472,9 +490,8 @@ def loadLocalConfig():
 			dom = minidom.parse(fname)
 		except xml.parsers.expat.ExpatError, e:
 			raise VizError(VizError.BAD_CONFIGURATION, "Failed to parse XML file '%s'. Reason: %s"%(fname, str(e)))
-
-		newObj = vsapi.deserializeVizResource(dom.documentElement, [vsapi.Keyboard])	
-		sysConfig['templates']['keyboards'][newObj.getType()] = newObj
+		newObj = vsapi.deserializeVizResource(dom.documentElement, [vsapi.Keyboard])
+		sysConfig['templates']['keyboard'][newObj.getType()] = newObj
 
 	# Mice templates
 	fileList = glob('/opt/vizstack/share/templates/mouse/*.xml')
@@ -486,7 +503,11 @@ def loadLocalConfig():
 			raise VizError(VizError.BAD_CONFIGURATION, "Failed to parse XML file '%s'. Reason: %s"%(fname, str(e)))
 
 		newObj = vsapi.deserializeVizResource(dom.documentElement, [vsapi.Mouse])	
-		sysConfig['templates']['mice'][newObj.getType()] = newObj
+		sysConfig['templates']['mouse'][newObj.getType()] = newObj
+
+	# If we are asked for templates only, then we are done.
+	if onlyTemplates:
+		return sysConfig
 
 	# Check the master config file.	
 	try:
@@ -512,11 +533,16 @@ def loadLocalConfig():
 	nodes_node = domutil.getChildNode(root_node,"nodes")
 	nodeIdx = 0
 	for node in domutil.getChildNodes(nodes_node, "node"):
-		nodeName = domutil.getValue(domutil.getChildNode(node,"name"))
+		nodeName = domutil.getValue(domutil.getChildNode(node,"hostname"))
 		modelName = domutil.getValue(domutil.getChildNode(node, "model"))
 
 		newNode = vsapi.VizNode(nodeName, modelName, nodeIdx)
 		nodeIdx = nodeIdx+1
+
+		try:
+			newNode.setAllocationBias(int(domutil.getValue(domutil.getChildNode(node, "allocationBias"))))
+		except:
+			pass
 
 		propsNode = domutil.getChildNode(node, "properties")
 		if propsNode is not None:
@@ -525,23 +551,32 @@ def loadLocalConfig():
 		resList = []
 		gpus = []
 		for gpu in domutil.getChildNodes(node, "gpu"):
-			gpu_index = int(domutil.getValue(domutil.getChildNode(gpu,"index")))
-			gpu_bus_id = domutil.getValue(domutil.getChildNode(gpu,"bus_id"))
-			gpu_type = domutil.getValue(domutil.getChildNode(gpu,"type"))
-			scanoutNode = domutil.getChildNode(gpu,"useScanOut")
-			if scanoutNode is None:
+			inGPU  = vsapi.deserializeVizResource(gpu, [vsapi.GPU])
+			if inGPU.getUseScanOut() is None:
 				raise VizError(VizError.BAD_CONFIGURATION, "ERROR: useScanOut needs to be defined for every GPU")
 
-			useScanOut = bool(domutil.getValue(scanoutNode))
 			try:
-				newGPU = copy.deepcopy(sysConfig['templates']['gpu'][gpu_type])
-			except IndexError, e:
-				raise VizError(VizError.BAD_CONFIGURATION, "ERROR: No such GPU type '%s'"%(gpu_type))
+				newGPU = copy.deepcopy(sysConfig['templates']['gpu'][inGPU.getType()])
+			except KeyError, e:
+				raise VizError(VizError.BAD_CONFIGURATION, "ERROR: No such GPU type '%s'"%(inGPU.getType()))
 
-			newGPU.setIndex(gpu_index)
+			# FIXME: implement a GPU.copyTemplate function that will copy the template info
+			newGPU.setIndex(inGPU.getIndex())
 			newGPU.setHostName(nodeName)
-			newGPU.setBusId(gpu_bus_id)
-			newGPU.setUseScanOut(useScanOut)
+			newGPU.setBusId(inGPU.getBusId())
+			newGPU.setUseScanOut(inGPU.getUseScanOut())
+			newGPU.setAllowStereo(inGPU.getAllowStereo())
+			newGPU.setShareLimit(inGPU.getShareLimit())
+			if inGPU.isSharable():
+				newGPU.setSharedServerIndex(inGPU.getSharedServerIndex())
+			newGPU.clearScanouts()
+			allSC = inGPU.getScanouts()
+			if allSC is not None:
+				for pi in allSC.keys():
+					thisScanout = allSC[pi]
+					if thisScanout is None:
+						continue
+					newGPU.setScanout(pi, thisScanout['display_device'], thisScanout['type'])
 			gpus.append(newGPU)
 		if len(gpus)==0:
 			print >>sys.stderr, "WARNING: Node %s has no GPUs."%(nodeName)
@@ -602,7 +637,10 @@ def loadLocalConfig():
 
 				X_servers[xv]=None
 				svr = vsapi.Server(xv, nodeName, serverType)
-				all_servers.append(svr)
+				sharedGPUs = filter(lambda x:x.isSharable(), gpus)
+				# Don't add shared servers as resources
+				if xv not in map(lambda x:x.getSharedServerIndex(), sharedGPUs):
+					all_servers.append(svr)
 		if len(all_servers)==0:
 			raise VizError(VizError.BAD_CONFIGURATION, "WARNING: Node %s has no X Servers."%(nodeName))
 		resList += all_servers
@@ -667,6 +705,238 @@ def loadLocalConfig():
 
 	return sysConfig
 
+def parseXLogFile(xServerNumber=0):
+	try:
+		fname = '/var/log/Xorg.%d.log'%(xServerNumber)
+		f = open(fname,'r')
+	except IOError, e:
+		raise ValueError, "Invalid server number. Failed to open file '%s'. Reason : %s"%(fname, str(e))
+
+	# Extract all file data
+	all_lines = f.readlines()
+	f.close()
+
+	# NOTE: each of the regexps below have an extra ".*" before
+	# NVIDIA. Some versions of the driver append a date value
+	# in every line, and this takes care of those cases.
+	#
+	#Detect the starting of the EDID
+	# Sample lines I've seen are
+	#(--) NVIDIA(0): --- EDID for LPL (DFP-0) ---
+	#
+	edid_header_re = re.compile("^\(--\)[\s]+.*NVIDIA\(([0-9]+)\):[\s]+---[\s]+EDID[\s]+for[\s]+(.*)[\s]+\(([A-Z]+)\-([0-9]+)\)[\s]+---[\s]+$")
+
+	#
+	# Property lines can be
+	#'(--) NVIDIA(0): 32-bit Serial Number         : 0' # Value = 0
+	#'(--) NVIDIA(0): Serial Number String         : '  # NOTE: no Value!
+	#
+	edid_prop_re = re.compile("^\(--\)[\s]+.*NVIDIA\(([0-9]+)\):[\s]+(.*)[\s]+:[\s]+((.*)[\s]+)?$")
+
+	# Properties end with
+	edid_end_prop_re = re.compile("^\(--\)[\s]+.*NVIDIA\(([0-9]+)\):[\s]+$")
+
+	# EDIDs have this 'Prefer first detailed timing' property.
+	# If set to 'Yes', then the mode following the below line is the default mode for the
+	# device
+	#(--) NVIDIA(0): Detailed Timings:
+	edid_detailed_timing_re = re.compile("^\(--\)[\s]+.*NVIDIA\(([0-9]+)\):[\s]+Detailed Timings:[\s]*$")
+
+	# Each supported mode is shown as
+	# '(--) NVIDIA(0):   1280 x 800  @ 60 Hz'
+	edid_supported_mode_re = re.compile("^\(--\)[\s]+.*NVIDIA\(([0-9]+)\):[\s]+([0-9]+)[\s]+x[\s]+([0-9]+)[\s]+@[\s]+([0-9\.]+)[\s]+Hz[\s]*$")
+
+	# Modes are followed by the Raw EDID bytes
+	#'(--) NVIDIA(0): Raw EDID bytes:'
+	edid_raw_edid_start_re = re.compile("^\(--\)[\s]+.*NVIDIA\(([0-9]+)\):[\s]+Raw EDID bytes:[\s]*$")
+
+	# EDID data bytes are in this format
+	#(--) NVIDIA(0):   00 4c 50 31 34 31 57 58  31 2d 54 4c 41 32 00 ae
+	edid_data_re = re.compile("^\(--\)[\s]+.*NVIDIA\(([0-9]+)\):[\s]+"+ ("([0-9a-f]{2})[\s]+"*16)+"[\s]*$")
+	edid_footer_re = re.compile("^\(--\)[\s]+.*NVIDIA\(([0-9]+)\):[\s]+---[\s]+End[\s]+of[\s]+EDID[\s]+for[\s]+(.*)[\s]+\(([A-Z]+)\-([0-9]+)\)[\s]+---[\s]+$")
+
+	# Supported display devices can span two lines...
+	#(II) Mar 10 06:40:21 NVIDIA(0): Supported display device(s): CRT-0, CRT-1, DFP-0, DFP-1,
+	#(II) Mar 10 06:40:21 NVIDIA(0):     DFP-2, DFP-3
+	sup_dd_re = re.compile("^\(II\)[\s]+.*NVIDIA\(([0-9]+)\):[\s]+Supported display device\(s\):(.*)$")
+	ext_sup_dd_re = re.compile("^\(II\)[\s]+.*NVIDIA\(([0-9]+)\):[\s](.*)$")
+	
+	# Process line by line
+	lineNum = -1
+	maxLines = len(all_lines)
+
+	allDisplays = []
+	allScanouts = []
+	while lineNum < (maxLines-1):
+		lineNum += 1
+		thisLine = all_lines[lineNum]
+
+		ddcapmatch = sup_dd_re.match(thisLine)
+		if ddcapmatch:
+			ddcapProps = ddcapmatch.groups()
+			allDevs = ddcapProps[1].lstrip().rstrip()
+			if len(allDevs)>0: # Empty match means no display devices are supported
+				thisGPUScanout = {}
+				thisGPUScanout['GPU']=int(ddcapProps[0])
+				if allDevs[-1]==',':
+					lineNum += 1
+					ddcapmatch = ext_sup_dd_re.match(all_lines[lineNum])
+					ddcapProps = ddcapmatch.groups()
+					otherDevs = ddcapProps[1].lstrip().rstrip()
+					allDevs += otherDevs
+				allDevs = map(lambda x:x.lstrip().rstrip(), allDevs.split(','))
+				gpuScanouts = {}
+				for dev in allDevs:
+					parts = dev.split('-')
+					port_index = int(parts[1])
+					port_type = parts[0]
+					try:
+						gpuScanouts[port_index].append(port_type)
+					except:
+						gpuScanouts[port_index]=[port_type]
+				thisGPUScanout['scanouts']=gpuScanouts
+				allScanouts.append(thisGPUScanout)
+				# Done for this line
+				continue
+
+		headerMatch = edid_header_re.match(thisLine)
+		# Ignore lines till the beginning of an EDID header
+		if headerMatch is None:
+			continue
+
+		thisDisplay = {}
+		headerProps = headerMatch.groups()
+		thisDisplay['GPU'] = int(headerProps[0])
+		thisDisplay['display_device'] = headerProps[1]
+		thisDisplay['port_index'] = int(headerProps[3])
+		thisDisplay['output_type'] = headerProps[2]
+		thisDisplay['edid_modes'] = []
+		thisDisplay['edid_bytes'] = []
+
+		# The header will be followed by a list of properties
+		# that the nvidia driver decodes from the EDID
+		# The end of this information is indicated with a line like
+		# "(--) NVIDIA(0): "
+		while lineNum < (maxLines-1):
+			lineNum += 1
+			thisLine = all_lines[lineNum]
+			mob2 = edid_end_prop_re.match(thisLine)
+			if mob2 is None:
+				propMatch = edid_prop_re.match(thisLine)
+				if propMatch is not None:
+					#print propMatch.groups()
+					propMatches = propMatch.groups()
+					propName = propMatches[1].rstrip()
+					thisDisplay[propName]=propMatches[3]
+					
+				else:
+					raise ValueError, "Failed parsing line:'%s'"%(thisLine)
+			else:
+				break
+
+		next_is_default = False
+		# Next find all supported modes
+		while lineNum < (maxLines-1):
+			lineNum += 1
+			thisLine = all_lines[lineNum]
+			mob2 = edid_raw_edid_start_re.match(thisLine)
+			if mob2 is None:
+				# FIXME: we have to handle "preferred mode"s here!
+				# this manifests as "prefer first detailed timing" on edids
+				matchedMode = edid_supported_mode_re.match(thisLine)
+				if matchedMode is not None:
+					#print matchedMode.groups()
+					matchedMode = matchedMode.groups()
+					mode_width = int(matchedMode[1])
+					mode_height = int(matchedMode[2])
+					mode_refresh = matchedMode[3]
+					thisDisplay['edid_modes'].append([mode_width, mode_height, mode_refresh])
+					if next_is_default:
+						thisDisplay['first_detailed_timing'] = [mode_width, mode_height, mode_refresh]
+						next_is_default = False
+				else:
+					doesMatch = edid_detailed_timing_re.match(thisLine)
+					if doesMatch is not None:
+						next_is_default = True
+			else:
+				break
+
+		# Next leach all EDID data bytes
+		# till the end of EDID
+		while lineNum < (maxLines-1):
+			lineNum += 1
+			thisLine = all_lines[lineNum]
+			footerMatch = edid_footer_re.match(thisLine)
+			if footerMatch is None:
+				# Till we reach the footer, we may get data bytes
+				edidData = edid_data_re.match(thisLine)
+				if edidData is not None:
+					#print edidData.groups()
+					for edidByte in edidData.groups()[1:]:
+						thisDisplay['edid_bytes'].append(edidByte)
+			else:
+				break
+		hsr = thisDisplay['Valid HSync Range'].split('-')
+		hsyncMin = hsr[0].lstrip().rstrip().split(' ')[0]
+		hsyncMax = hsr[1].lstrip().rstrip().split(' ')[0]
+		#print hsyncMin, hsyncMax
+
+		vsr = thisDisplay['Valid VRefresh Range'].split('-')
+		vrefreshMin = vsr[0].lstrip().rstrip().split(' ')[0]
+		vrefreshMax = vsr[1].lstrip().rstrip().split(' ')[0]
+		thisDisplay['hsync_range'] = [hsyncMin, hsyncMax]
+		thisDisplay['vrefresh_range'] = [vrefreshMin, vrefreshMax]
+		#print vrefreshMin, vrefreshMax
+
+		# Create a display device object representing this display device
+		thisDD = vsapi.DisplayDevice(thisDisplay['display_device'])
+		thisDD.setEDIDDisplayName(thisDisplay['display_device'])
+		thisDD.setHSyncRange(thisDisplay['hsync_range'])
+		thisDD.setVRefreshRange(thisDisplay['vrefresh_range'])
+		thisDD.setEDIDBytes(string.join(thisDisplay['edid_bytes'],""))
+		for modeDesc in thisDisplay['edid_modes']:
+			thisDD.addMode('edid', '%dx%d_%s'%(modeDesc[0], modeDesc[1], modeDesc[2]), modeDesc[0], modeDesc[1], modeDesc[2])
+		if thisDisplay.has_key('first_detailed_timing'):
+			modeDesc = thisDisplay['first_detailed_timing']
+			thisDD.setDefaultMode('%dx%d_%s'%(modeDesc[0], modeDesc[1], modeDesc[2]))
+		if thisDisplay['output_type']=='DFP':
+			thisDD.setInput('digital')
+		elif thisDisplay['output_type']=='CRT':
+			thisDD.setInput('analog')
+		thisDisplay['display_template'] = thisDD
+		if thisDisplay.has_key('Maximum Image Size'):
+			dims = map(lambda x:int(x[:-2]), map(lambda x:x.strip(), thisDisplay['Maximum Image Size'].split('x')))
+			thisDD.setDimensions(dims)
+
+		# Add this to our list of displays
+		allDisplays.append(thisDisplay)
+
+	return {'possible_scanouts': allScanouts, 'connected_displays': allDisplays}
+
+def normalizeRG(rg):
+	"""
+	'Normalizes' a resource group. This basically passes through
+	each reslist in the rg, and if only one resource has a hostname
+	defined, then it pastes the hostname to all other resources.
+	"""
+	outRG = copy.deepcopy(rg)
+	allRes = outRG.getResources()
+	outResList = []
+	for resList in allRes:
+		if isinstance(resList, list):
+			hostNames = []
+			for res in resList:
+				thisHostName = res.getHostName()
+				if (thisHostName is not None) and (thisHostName not in hostNames):
+					hostNames.append(thisHostName)
+			#paste the hostname into all resources
+			if len(hostNames)==1:
+				onlyHostName = hostNames[0]
+				for res in resList:
+					res.setHostName(onlyHostName)
+		outResList.append(resList)
+	outRG.setResources(allRes)
+	return outRG
 
 if __name__ == "__main__":
 	ra = vsapi.ResourceAccess()
@@ -681,3 +951,16 @@ if __name__ == "__main__":
 	#print '-- out of shell --'
 	alloc.stopViz(ra)
 	ra.stop()
+
+	# EDID parsing based display detection testing
+	# Note : uses X server 0
+	displayList = getConnectedDisplays(0)
+	gpuDisplays = {}
+	for display in displayList:
+		thisGPU = display['GPU']
+		thisMonitor = display['display_device']
+		try:
+			gpuDisplays[thisGPU].append(thisMonitor)
+		except KeyError:
+			gpuDisplays[thisGPU]=[thisMonitor]
+	pprint(gpuDisplays)

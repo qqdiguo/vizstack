@@ -173,10 +173,10 @@ this queries resources, not allocations.
 Examples
 <ssm>
 	<query_resource>
-		<serverconfig>
+		<server>
 			<hostname>alpha13</hostname>
 			<server_number>0</server_number>
-		</serverconfig>
+		</server>
 	</query>
 </ssm>
 
@@ -201,12 +201,12 @@ need to be in the same allocation.
 <ssm>
 	<update_serverconfig>
 		<allocId>10</allocId> <!-- need to specify allocation id
-		<serverconfig>
+		<server>
 			first server config
-		</serverconfig>
-		<serverconfig>
+		</server>
+		<server>
 			second server config
-		</serverconfig>
+		</server>
 		... and so on....
 	</update_serverconfig>
 </ssm>
@@ -236,10 +236,10 @@ allowed here - only complete references are allowed.
 
 <ssm>
 	<get_serverconfig>
-		<serverconfig>
+		<server>
 			<hostname>alpha13</hostname>
 			<server_number>0</server_number>
-		<serverconfig>
+		<server>
 	</get_serverconfig>
 </ssm>
 
@@ -250,10 +250,10 @@ Return value would be
 		<status>0</status>
 		<message>Success</message>
 		<return_value>
-			<serverconfig>
+			<server>
 					serialization of specific X server here. This contains the
 					entire config
-			</serverconfig>
+			</server>
 		</return_value>
 	</response>
 </ssm>
@@ -269,9 +269,9 @@ the X servers in the allocation will be waited for.
 		<allocId>nn</allocId>
 		<newState>0|1</newState>
 		<timeout>time to wait</timeout>
-		<serverconfig>serialization</serverconfig>
-		<serverconfig>serialization</serverconfig>
-		<serverconfig>serialization</serverconfig>
+		<server>serialization</server>
+		<server>serialization</server>
+		<server>serialization</server>
 	</wait_x_state>
 </ssm>
 
@@ -292,9 +292,9 @@ message from an X client.
 <ssm>
 	<update_x_avail>
 		<newState>0|1</newState>
-		<serverconfig>
+		<server>
 			deserialization here
-		</serverconfig>
+		</server>
 	</update_x_avail>
 </ssm>
 
@@ -315,8 +315,8 @@ wait till they've gone away.
 <ssm>
 	<stop_x_server>
 		<allocId>nn</allocId>
-		<serverconfig>serialization</serverconfig>
-		<serverconfig>serialization</serverconfig>
+		<server>serialization</server>
+		<server>serialization</server>
 		...
 	</stop_x_server>
 </ssm>

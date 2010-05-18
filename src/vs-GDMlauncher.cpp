@@ -21,6 +21,7 @@
 #include <unistd.h>
 #include <stdlib.h>
 
+#include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <pwd.h>
@@ -202,10 +203,14 @@ void parentWaitTillSUIDExits(int suidChildPid, int origParentPipe[2])
 int main(int argc, char **argv)
 {
 	int origParentPipe[2];
+	int userUid;
+
+	// Create /var/run/vizstack. No failure if we are unable to create it
+	mkdir("/var/run/vizstack", 0755); // user=> rwx, others => rx
 
 	if(access("/var/run/vizstack", F_OK)!=0)
 	{
-		fprintf(stderr, "ERROR: Directory /var/vizstack does not exist. I cannot proceed without this.\n");
+		fprintf(stderr, "ERROR: Directory /var/vizstack does not exist, or could not be created. I cannot proceed without this.\n");
 		exit(-1);
 	}
 
@@ -213,6 +218,8 @@ int main(int argc, char **argv)
 	{
 		g_debugPrints = true;
 	}
+
+	userUid = getuid(); // get user ID to ask for the server to run for this account
 
 	struct passwd pwd, *ppwd;
 	char pwd_buffer[2048];
@@ -283,7 +290,9 @@ int main(int argc, char **argv)
 
 	// Patch the config file for the real user
 	char cmd[256]; 
-	sprintf(cmd, "sed %s -es/@@USER@@/%s/g > %s", TEMPLATE_GDM_CONF, pwd.pw_name, RUNTIME_GDM_CONF);
+	char uidAsString[256];
+	sprintf(uidAsString, "%d", userUid);
+	sprintf(cmd, "sed %s -es/@@USER@@/%s/g -es/@@UID@@/%s/g > %s", TEMPLATE_GDM_CONF, pwd.pw_name, uidAsString, RUNTIME_GDM_CONF);
 	if(system(cmd)!=0)
 	{
 		fprintf(stderr, "ERROR : Unable to generate a config file for the GDM session\n");

@@ -48,29 +48,34 @@ class Allocation:
 	def __clearAll(self):
 		self.allocatedResources = None
 		self.launcherList = None
+		self.user = None
 
-	"""
-	launcher => the real allocation from the scheduler. This encapsulates all resources included in
-	the allocation.
-	allocatedResources => the resources allocated for this.
-	"""
-	def __init__(self, launcherList, allocatedResources):
+	def __init__(self, launcherList, allocatedResources, user):
+		"""
+		launcher => the real allocation from the scheduler. This encapsulates all resources included in
+		the allocation.
+		allocatedResources => the resources allocated for this.
+		"""
 		self.launcherList = launcherList
 		self.allocatedResources = allocatedResources
+		self.user = user
 
-	"""
-	Destructor : do nothing. If the user wants, s/he will call deallocate. Else the 
-	SSM takes care if cleanup on disconnect is detected.
-	"""
+	def getUser(self):
+		return self.user
+
 	def __del__(self):
+		"""
+		Destructor : do nothing. If the user wants, s/he will call deallocate. Else the 
+		SSM takes care if cleanup on disconnect is detected.
+		"""
 		pass
 
-	"""
-	This is called when the allocation needs to be removed from the scheduler.
-
-	Free the resources that this allocation has.
-	"""
 	def deallocate(self):
+		"""
+		This is called when the allocation needs to be removed from the scheduler.
+
+		Free the resources that this allocation has.
+		"""
 		# if we're already freed, then no need to do anything
 		if self.allocatedResources is None:
 			return
@@ -83,26 +88,36 @@ class Allocation:
 		# Clear all internal variables to indicate that we are'nt valid
 		self.__clearAll()
 
-	"""
-	Get the list of resources associated with this allocation.
-	"""
 	def getResources(self):
+		"""
+		Get the list of resources associated with this allocation.
+		"""
 		return self.allocatedResources
 
 class Metascheduler:
-	def __init__(self, vizResourceList, schedList):
+	def __init__(self, nodeMap, schedList):
 		self.allocations = []
 
-		# use deepcopy to avoid references to original objects
-		self.vizResourceList = copy.deepcopy(vizResourceList)
+		vizResourceList = []
+		nodeWeightWhenFree = {}
+		for nodeName in nodeMap:
+			nodeWeightWhenFree[nodeName] = 0
+			node= nodeMap[nodeName]
+			vizResourceList = vizResourceList + node.getResources()
 
-		# we keep a hash table which lets us find if a resource is free or not.
+		# we keep a hash table to let us easily get to the object by name
+		# we keep references to the original objects. The allocation
+		# state is thus kept in one set of objects, which are in maintained
+		# in the caller of the metascheduler
 		infoTable = {}
-		for res in self.vizResourceList:
-			infoTable[res.hashKey()] = {"used":0, "ref":res}
+		for res in vizResourceList:
+			infoTable[res.hashKey()] = res
+			nodeWeightWhenFree[res.getHostName()] += res.getAllocationWeight()
 
 		self.infoTable = infoTable
 		self.schedList = schedList
+		self.nodeMap = nodeMap
+		self.nodeWeightWhenFree = nodeWeightWhenFree
 
 	"""
 	Allocate the list of requested resources. 
@@ -154,6 +169,10 @@ class Metascheduler:
 			if isinstance(possibleRes, list):
 				indexOfExpandedInFinal.append(len(expandedResourceList))
 				expandedResourceList.append(possibleRes)
+			elif isinstance(possibleRes, vsapi.VizNode): # and (len(possibleRes.getResources())==0):
+				# Append node as is
+				indexOfExpandedInFinal.append(len(expandedResourceList))
+				expandedResourceList.append(possibleRes)
 			elif isinstance(possibleRes, vsapi.VizResourceAggregate):
 				sti = len(expandedResourceList)
 				realRes = possibleRes.getResources() # this may be a list of items or lists
@@ -201,13 +220,19 @@ class Metascheduler:
 			for res in innerList:
 				nd = res.getAllocationDOF()
 				if nd>max_dof: max_dof = nd
+				if isinstance(res, vsapi.VizNode):
+					continue
 				if res.isCompletelyResolvable():
 					hk = res.hashKey()
 					if not fixedResources.has_key(hk):
-						fixedResources[hk]={'count':1, 'ref':res}
+						fixedResources[hk]={'count':1, 'ref':res, 'share_count':0}
 					else:
 						# increment usage count
 						fixedResources[hk]['count']+=1
+					# Increment share count
+					if res.isShared():
+						fixedResources[hk]['share_count']+=1
+
 
 			# save the information for this requirement by DOF
 			resReqByDOF[max_dof].append({
@@ -219,8 +244,10 @@ class Metascheduler:
 		if len(resourcesUsedMultipleTimes)>0:
 			msg = ""
 			for res in resourcesUsedMultipleTimes:
-				msg += "%s used %d times,"%(res, fixedRosources[res]['count'])
-			raise ValueError, "Invalid resource request. One or more resources have been requested more than once, %s"%(res)
+				if fixedResources[res]['count']!=fixedResources[res]['share_count']:
+					msg += "%s used %d times %d times shared,"%(res, fixedResources[res]['count'], fixedResources[res]['share_count'])
+			if len(msg)>0:
+				raise ValueError, "Invalid resource request. One or more resources have been requested more than once OR has been requested both shared and unshared, %s. Reason: %s"%(res, msg)
 		errorMessage = ""
 
 		unusableNodes = []
@@ -233,19 +260,31 @@ class Metascheduler:
 		#
 		for resKey in fixedResources:
 			if not self.infoTable.has_key(resKey):
-				raise vsapi.VizError(vsapi.VizError.BAD_RESOURCE, "I dont manage the resource : %s. So can't allocate that"%(resKey))
-			if self.infoTable[resKey]["used"]!=0:
-				raise vsapi.VizError(vsapi.VizError.RESOURCE_BUSY, "Resource %s is already being used. It can't be allocated for you at this time."%(resKey))
+				raise vsapi.VizError(vsapi.VizError.BAD_RESOURCE, "Pre-allocation: I dont manage the resource : %s. So can't allocate that"%(resKey))
 			# if the resource is on a node which is not usable, then we can't satisfy this request.
-			if self.infoTable[resKey]['ref'].getHostName() in unusableNodes:
+			if self.infoTable[resKey].getHostName() in unusableNodes:
 				raise vsapi.VizError(vsapi.VizError.RESOURCE_UNAVAILABLE, "%s is not available at this time."%(resKey))
 
+			if not self.infoTable[resKey].isFree():
+				raise vsapi.VizError(vsapi.VizError.RESOURCE_BUSY, "Resource %s is already being used. It can't be allocated for you at this time."%(resKey))
+
+			if not self.infoTable[resKey].typeSearchMatch(fixedResources[resKey]['ref']):
+				raise vsapi.VizError(vsapi.VizError.USER_ERROR, "Requested %s has a different type compared to the available resource. So this requirement cannot be fulfilled"%(resKey))
+
 			# if the resource is on a node which is not in the search list, then we can't satisfy this request.
-			if (len(includeNodeList)>0) and (self.infoTable[resKey]['ref'].getHostName() not in includeNodeList):
+			if (len(includeNodeList)>0) and (self.infoTable[resKey].getHostName() not in includeNodeList):
 				raise vsapi.VizError(vsapi.VizError.RESOURCE_UNAVAILABLE, "%s is not in the include list to choose from. So the request can't be satisfied."%(resKey))
 
-			if not self.infoTable[resKey]['ref'].typeSearchMatch(fixedResources[resKey]['ref']):
-				raise vsapi.VizError(vsapi.VizError.USER_ERROR, "Requested %s has a different type compared to the available resource. So this requirement cannot be fulfilled"%(resKey))
+			# XXX: The next two checks can be enforced by using "canAllocate()"
+			# However, that will reduce the verbosity of the error messages
+
+			# check if user is asking for exclusive access on a resource which is already shared, then we have to fail
+			if fixedResources[resKey]['ref'].isExclusive() and self.infoTable[resKey].isShared():
+				raise vsapi.VizError(vsapi.VizError.RESOURCE_BUSY, "Resource %s has already been allocated for shared access. It can't be allocated for you in exclusive mode at this time."%(resKey))
+
+			# check if user is asking for shared access on a resource which is already exclusively allocated, then we have to fail
+			if fixedResources[resKey]['ref'].isShared() and (not self.infoTable[resKey].isSharable()):
+				raise vsapi.VizError(vsapi.VizError.RESOURCE_BUSY, "Resource %s is not sharable and hence cannot be allocated for shared access."%(resKey))
 	
 		# FIXME: we could check if this request can ever be satisfied. Implement this later
 		
@@ -255,7 +294,7 @@ class Metascheduler:
 		#
 		freeResources = {}
 		for resKey in self.infoTable:
-			ob = self.infoTable[resKey]['ref']
+			ob = self.infoTable[resKey]
 			obNodeName = ob.getHostName()
 			# Skip resources on unusable nodes
 			if obNodeName in unusableNodes:
@@ -265,8 +304,10 @@ class Metascheduler:
 				continue
 			if not freeResources.has_key(obNodeName):
 				freeResources[obNodeName] = {}
-			if self.infoTable[resKey]['used']==0:
-				freeResources[obNodeName][resKey] = ob
+			if self.infoTable[resKey].isFree():
+				# Create a copy of the free resources. If we fail allocation,
+				# then our internal table will still be consistent!
+				freeResources[obNodeName][resKey] = copy.deepcopy(ob)
 
 		# create an empty list for all allocations.
 		# this has 1 spot for every requirement
@@ -274,6 +315,7 @@ class Metascheduler:
 		allocatedResources = [None]*len(expandedResourceList)
 
 		# allocate all DOF=0 items
+		# Note that this not make them unavailable yet
 		for reqDesc in resReqByDOF[0]:
 			reqIndex = reqDesc['reqIndex']
 			allocatedRes = reqDesc['requirement']
@@ -290,13 +332,21 @@ class Metascheduler:
 					for res in resToAlloc:
 						if res.getAllocationDOF()==0:
 							resKey = res.hashKey()
-							freeResources[res.getHostName()].pop(resKey)
+							resHost = res.getHostName()
+							# Allocate out of the existing item
+							freeResources[resHost][resKey].doAllocate(res, userInfo['uid'])
+							if not freeResources[resHost][resKey].isFree():
+								freeResources[resHost].pop(resKey)
 				else:
 					res = resToAlloc
 					if res.getAllocationDOF()==0:
 						resKey = res.hashKey()
-						freeResources[res.getHostName()].pop(resKey)
-					
+						resHost = res.getHostName()
+						# Allocate out of the existing item
+						freeResources[resHost][resKey].doAllocate(res, userInfo['uid'])
+						if not freeResources[resHost][resKey].isFree():
+							freeResources[resHost].pop(resKey)
+				
 		#
 		# The real allocation logic starts from here ...
 		#
@@ -361,6 +411,7 @@ class Metascheduler:
 		#
 
 		# create a list, with each element saying what resources are free on a particular node
+		# note that availResources has references to the objects
 		availResources = []
 		for node in freeResources:
 			freeRes  = []
@@ -400,12 +451,12 @@ class Metascheduler:
 				# Note: adding the nodeName to all these reqs makes all reqs fully resolved
 				# they're all DOF=1 (index is specified). Adding hostname makes them DOF=0
 				reqWithThisHostName = self.__copyWithThisNodeName(resToBeAllocated, nodeName)
-				allocThese, remainingAvail = self.__resourceMatchDOF0(reqWithThisHostName, nodeFreeRes)
+				allocThese, remainingAvail = self.__resourceMatchDOF0(reqWithThisHostName, nodeFreeRes, userInfo['uid'])
 				if allocThese is None:
 					continue
 
 				if dof2ReqsByNode.has_key(nodeName):
-					satisfied, remaining = self.__resourceMatchDOF2(dof2ReqsByNode[nodeName], remainingAvail)
+					satisfied, remaining = self.__resourceMatchDOF2(dof2ReqsByNode[nodeName], remainingAvail, userInfo['uid'])
 					if satisfied is None:
 						continue
 
@@ -461,7 +512,7 @@ class Metascheduler:
 				raise VizError(VizError.USER_ERROR, "Can't allocate resources. Node name '%s' is not available for allocation"%(nodeName))
 			nodeFreeRes = availResourcesByNodeName[nodeName]
 		
-			allocThese, remainingAvail = self.__resourceMatchDOF2(resToBeAllocated, nodeFreeRes)
+			allocThese, remainingAvail = self.__resourceMatchDOF2(resToBeAllocated, nodeFreeRes, userInfo['uid'])
 			if allocThese is None:
 				# This shouldn't happen at all. If it does, it's a bug in our algorithm
 				raise VizError(VizError.INTERNAL_ERROR, "Couldn't allocate a DOF=2 requirement. Please contact the developers")
@@ -501,33 +552,81 @@ class Metascheduler:
 
 			didSatisfy = False
 			resRequired = reqDesc['requirement']
-			resFinalSelected, resToBeAllocated, resTBAIndexMap = self.__classifyRes(reqDesc['requirement'])
-				
-			for nodeAvail in availResources:
-				nodeName = nodeAvail[0]
-				nodeFreeRes = nodeAvail[1]
-				# Note: adding the nodeName to all these reqs converts these DOF=3 requests turn into DOF=2
-				reqWithThisHostName = self.__copyWithThisNodeName(resToBeAllocated, nodeName)
-				allocThese, remainingAvail = self.__resourceMatchDOF2(reqWithThisHostName, nodeFreeRes)
-				if allocThese is None:
-					continue
+			if not isinstance(resRequired, vsapi.VizNode): # List of resource
+				resFinalSelected, resToBeAllocated, resTBAIndexMap = self.__classifyRes(reqDesc['requirement'])
+					
+				for nodeAvail in availResources:
+					nodeName = nodeAvail[0]
+					nodeFreeRes = nodeAvail[1]
+					# Note: adding the nodeName to all these reqs converts these DOF=3 requests turn into DOF=2
+					reqWithThisHostName = self.__copyWithThisNodeName(resToBeAllocated, nodeName)
+					allocThese, remainingAvail = self.__resourceMatchDOF2(reqWithThisHostName, nodeFreeRes, userInfo['uid'])
+					if allocThese is None:
+						continue
 
-				# Got the resources...
-				didSatisfy = True
+					# Got the resources...
+					didSatisfy = True
 
-				# put the allocated resources into their place
-				for idx in range(len(allocThese)):
-					resFinalSelected[resTBAIndexMap[idx]] = allocThese[idx]
+					# put the allocated resources into their place
+					for idx in range(len(allocThese)):
+						resFinalSelected[resTBAIndexMap[idx]] = allocThese[idx]
 
-				# update the available items on the node
-				nodeAvail[1] = remainingAvail
+					# update the available items on the node
+					nodeAvail[1] = remainingAvail
 
-				# And we are done meeting this requirement
-				break
+					# And we are done meeting this requirement
+					break
+			else:
+				# Whole node needs to be matched
+				for nodeAvail in availResources:
+					nodeName = nodeAvail[0]
+					nodeFreeRes = nodeAvail[1]
+					availResourceWeight = sum(map(lambda x: x.getAllocationWeight(), nodeFreeRes))
 
+					# Skip this node if the whole node is not available
+					if self.nodeWeightWhenFree[nodeName] != availResourceWeight:
+						continue
+
+					matchRes = resRequired.getResources()
+
+					# Use all the resources
+					resFinalSelected = copy.deepcopy(nodeFreeRes)
+
+					if len(matchRes)>0:
+						# We need to match specific resource requirements...
+						unmatchedRes = copy.copy(nodeFreeRes)
+						matchSuccess = False
+						for res in matchRes:
+							# Search in all the unmatched ones. This is an
+							# inefficient algorithm which may not work correctly
+							# given all kinds of complex match requirements.
+							# I retain this since it is simple and work for
+							# typical requirements!
+							# FIXME: if somebody complains, fix this! Fixing this
+							# really well will need lots of work I think
+							matchSuccess = False
+							for potentialMatch in unmatchedRes:
+								if potentialMatch.typeSearchMatch(res):
+									matchSuccess = True
+									unmatchedRes.remove(potentialMatch)
+									break
+							if not matchSuccess:
+								# No matches
+								break
+						if matchSuccess:
+							didSatisfy = True
+					else:
+						# We've satisfied reqs
+						didSatisfy = True
+
+					if didSatisfy:
+						# Remove all resources from the avail list, since we've allocated them
+						nodeAvail[1] = []
+						break
+					
 			if didSatisfy == False:
 				# we can't satisfy the user request
-				raise VizError(VizError.USER_ERROR, "Not able to satisfy the request with the available resources.")
+				raise VizError(VizError.USER_ERROR, "Not able to satisfy the request with the available resources (DOF=3)")
 
 			# put the allocated resources in their final place
 			allocatedResources[reqDesc['reqIndex']] = resFinalSelected
@@ -561,8 +660,8 @@ class Metascheduler:
 				if not self.infoTable.has_key(searchKey):
 					raise vsapi.VizError(vsapi.VizError.BAD_RESOURCE, "I dont manage the resource : %s. So can't allocate that"%(searchKey))
 	
-				if self.infoTable[searchKey]["used"]!=0:
-					raise vsapi.VizError(vsapi.VizError.RESOURCE_BUSY, "Programming Error. This is not supposed to happen! Allocator bug most likely"%(searchKey))
+				if not self.infoTable[searchKey].isFree():
+					raise vsapi.VizError(vsapi.VizError.RESOURCE_BUSY, "Programming Error - allocated resource (%s) is not free ? This is not supposed to happen! Allocator bug most likely"%(searchKey))
 
 				# Append this to the node list only if it is schedulable.
 				if res.isSchedulable():
@@ -599,6 +698,10 @@ class Metascheduler:
 				wasAggregate = False
 				wasList = True
 				resListList = [ allocatedResources[indexOfExpandedInFinal[itemIndex]] ] # list of VizResources
+			elif isinstance(requestedResources[itemIndex], vsapi.VizNode): # and (len(requestedResources[itemIndex].getResources())==0): # Whole node alloc
+				wasAggregate = True
+				wasList = False
+				resListList = [ allocatedResources[indexOfExpandedInFinal[itemIndex]] ]
 			elif isinstance(requestedResources[itemIndex], vsapi.VizResourceAggregate):
 				wasAggregate = True
 				wasList = False
@@ -624,10 +727,12 @@ class Metascheduler:
 					for res in resList:
 						# mark this resource as being in use
 						searchKey = res.hashKey()
-						self.infoTable[searchKey]["used"]=1
+						self.infoTable[searchKey].doAllocate(res, userInfo['uid'])
 
 						# make a copy of the original object corresponding to this resource
-						newRes = copy.deepcopy(self.infoTable[searchKey]["ref"])
+						# XXX: this will make the object have "instantaneous" shared info that
+						# is not dynamically allocated
+						newRes = copy.deepcopy(self.infoTable[searchKey])
 
 						# Create a schedulable only if the new item is a schedulable one
 						if newRes.isSchedulable():
@@ -649,7 +754,7 @@ class Metascheduler:
 			else:
 				finalResources.append(subAlloc[0][0])
 
-		newAlloc = Allocation(launcherList, finalResources)
+		newAlloc = Allocation(launcherList, finalResources, userInfo['uid'])
 
 		self.allocations.append(newAlloc)
 		return newAlloc
@@ -678,7 +783,7 @@ class Metascheduler:
 			out.append(newRes)
 		return out
 
-	def __resourceMatchDOF2(self, reqList, availList):
+	def __resourceMatchDOF2(self, reqList, availList, userInfo):
 		"""
 		Match a list of VizResources (reqList) to available resources on a node(avail).
 		The hostnames of all resources in reqList must match the hostname of availList.
@@ -690,11 +795,14 @@ class Metascheduler:
 
 		# match DOF=0
 		dof0only = filter(lambda x: x is not None,resFinalAllocated)
-		dof0match, remaining = self.__resourceMatchDOF0(dof0only, availList)
+		dof0match, remaining = self.__resourceMatchDOF0(dof0only, availList, userInfo)
 
 		# if we can't match the DOF=0, then we've failed
 		if dof0match == None:
 			return [None, None]
+
+		# NOTE: remaining is already a copy of availList, not a reference, so any
+		# failures in the rest of the function will not impact the original list
 
 		# NOTE: dof0match will be the same as dof0only on success
 		#
@@ -722,11 +830,6 @@ class Metascheduler:
 					availRes[resClass.rootNodeName].append(res)
 					break
 
-		# prioritise resources for selection
-		# allocate higher X server indexes first - lower ones are better used for RGS and
-		# VirtualGL
-		availRes[vsapi.Server.rootNodeName].sort(lambda x,y: y.getIndex()-x.getIndex())
-
 		matchedRes = []
 		for res in resToBeMatched:
 			match = None
@@ -740,8 +843,15 @@ class Metascheduler:
 					# the first one fulfilling the type match will be allocated
 					for mi in range(len(ar)):
 						possibleMatch = ar[mi]
-						if possibleMatch.typeSearchMatch(res):
-							match = ar.pop(mi) # remove this item from free, and consider it matched
+						if possibleMatch.canAllocate(res):
+							match = res
+							res.setHostName(possibleMatch.getHostName())
+							res.setIndex(possibleMatch.getIndex())
+							possibleMatch.doAllocate(res, userInfo)
+							# post allocation, if the object is not free then remove it from the
+							# free list
+							if not possibleMatch.isFree():
+								ar.pop(mi)
 							break
 					if match is None: # Not possible to match request with available resources
 						return [None, None]
@@ -764,7 +874,7 @@ class Metascheduler:
 
 		return [resFinalAllocated, allFree]
 
-	def __resourceMatchDOF0(self, reqList, availList):
+	def __resourceMatchDOF0(self, reqList, availList, userInfo):
 		"""
 		Match a list of VizResource requirements (req) to available resources on a node(avail).
 		All resources are fully specified. So this is just a dual loop
@@ -772,13 +882,20 @@ class Metascheduler:
 		else returns [None, availList]
 		"""
 		matched = []
-		remaining = copy.copy(availList) # FIXME: is this copy required ?
+		# make a complete copy of the available objects. In case
+		# of failures, we will just return the original list
+		remaining = copy.deepcopy(availList) 
 		for req in reqList:
 			foundIt = False
 			for avail in remaining:
-				if avail.refersToTheSame(req, True) and avail.typeSearchMatch(req):
+				if avail.refersToTheSame(req, True) and avail.canAllocate(req):
+					req.setHostName(avail.getHostName())
+					req.setIndex(avail.getIndex())
 					matched.append(req)
-					remaining.remove(avail)
+					avail.doAllocate(req, userInfo)
+					# remove from availability list only if it is not free as a result of allocation
+					if not avail.isFree(): 
+						remaining.remove(avail)
 					foundIt = True
 					break
 			# If one item fails matching, then it's failure overall
@@ -790,7 +907,44 @@ class Metascheduler:
 	def __sortAvailResources(self, resList):
 		# each element of list is [name, <list of resources>]
 		# sort with minimal number of resources coming first
-		resList.sort(lambda x,y: len(x[1])-len(y[1]))
+		nodeWeight2 = {}
+		for nodeEntry in resList:
+			nodeName = nodeEntry[0]
+			nodeResources = nodeEntry[1]
+			resWeight = {}
+			totalWeight = 0
+			# compute weight of each resource and the total weight of
+			# this node's resources
+			for res in nodeResources:
+				wt = res.getAllocationWeight()
+				resWeight[res.hashKey()] = wt
+				totalWeight += wt
+				#print "Res '%s' weight %d"%(res.hashKey(), wt)
+			# Sort resources of this node in order
+			nodeResources.sort(lambda x,y : resWeight[x.hashKey()]-resWeight[y.hashKey()])
+			nodeWeight2[nodeName] = totalWeight
+
+		def sortFunc(x,y):
+			nodeName1 = x[0]
+			nodeName2 = y[0]
+			node1 = self.nodeMap[nodeName1]
+			node2 = self.nodeMap[nodeName2]
+			# Return the node with the lower weight first
+			wt1 = node1.getAllocationWeight()-node2.getAllocationWeight()
+			if wt1 != 0:
+				return wt1
+
+			# Return the node whose resources have a lower weight next
+			wt2 = nodeWeight2[nodeName1]-nodeWeight2[nodeName2]
+			if wt2 != 0:
+				return wt2
+
+			# Return the node with lower index if all else fails. This
+			# gives a consistent & predictable order of allocation.
+			return self.node1.getIndex()-self.node2.getIndex()
+			
+		# Sort nodes with lower weights coming first
+		resList.sort(sortFunc)
 
 
 	def __sortReqList(self, reqDescList):
@@ -832,11 +986,9 @@ class Metascheduler:
 				else:
 					resList = [itemRes]
 				for res in resList:
-					# mark this resource as being free
+					# update availability of this resource
 					searchKey = res.hashKey()
-					if self.infoTable[searchKey]["used"]==0:
-						raise "Bad case - we're trying to free a resource which was free"
-					self.infoTable[searchKey]["used"]=0
+					self.infoTable[searchKey].deallocate(res, allocObj.getUser())
 
 		# deallocate the object - this frees up the scheduler, etc
 		allocObj.deallocate()

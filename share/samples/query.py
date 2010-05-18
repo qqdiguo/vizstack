@@ -53,7 +53,6 @@ displayDevices = ra.getTemplates(vsapi.DisplayDevice())
 # Print out information about each
 for device in displayDevices:
 	print "Display Device : %s"%(device.getType())
-	print "Vendor         : %s"%(device.getVendor())
 
 	defaultMode = device.getDefaultMode()
 	print "Preferred Mode : %s"%(defaultMode['alias'])
@@ -63,7 +62,18 @@ for device in displayDevices:
 	for mode in allModes:
 		# FIXME: we need to add a "stereo" attribute here
 		# NOTE: Refresh Rate is a "string" value
-		print "    Mode Name: %s, Resolution = %dx%d pixels, Refresh Rate = %s Hz"%(mode['alias'], mode['width'], mode['height'], mode['refresh'])
+		print "    Mode Name: %s"%(mode['alias'])
+		print "         Resolution = %dx%d pixels, Refresh Rate = %s Hz"%(mode['width'], mode['height'], mode['refresh'])
+		bezel_left = mode['bezel']['left']
+		bezel_right = mode['bezel']['right']
+		bezel_bottom = mode['bezel']['bottom']
+		bezel_top = mode['bezel']['top']
+		if bezel_left+bezel_right+bezel_bottom+bezel_top>0:
+			print "         Bezels :",
+			for bpos in ['left','right','bottom','top']:
+				if mode['bezel'][bpos]>0:
+					print "%s %d px "%(bpos, mode['bezel'][bpos]),
+			print
 	print
 
 # Next, lets get a list of GPU resources available

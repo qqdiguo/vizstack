@@ -12,9 +12,7 @@ no reason not to include this !
  xsi:schemaLocation="http://www.hp.com /opt/vizstack/share/schema/gpuconfig.xsd">
 
 		<model>Quadro FX 3450/4000 SDI</model>
-		<vendor>nVidia</vendor>
-		<pci_device_id>00cd</pci_device_id>
-		<pci_vendor_id>10de</pci_vendor_id>
+		<vendor>NVIDIA Corporation</vendor>
 		<scanout_caps>
 			<index>0</index>
 			<type>digital</type>
