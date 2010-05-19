@@ -130,7 +130,10 @@ def removeAllocation(ssmState, ms, allocId, all_clients):
 			# that
 			g_logger.debug(' Disconneting X server %s'%(client.XServerFor))
 			__signalSocketToExit(client.socket)
-			break # there can only be one X server
+			#
+			# continue the loop, since the allocation can have many X servers
+			# We need to disconnect them all 
+			#
 
 	# If a deallocation succeeded, then we just remove this 
 	# id from the list of allocations to cleanup!
@@ -1538,7 +1541,7 @@ def mainLoop(authType, ms, sysConfig, ssmState, serverSockets, client_info):
 		else:
 			selectTimeout = None
 
-		g_logger.debug('Waiting on %d clients and %d server for timeout = %s'%(len(client_sockets),len(serverSockets), selectTimeout))
+		g_logger.debug('Waiting on %d clients and %d server sockets for timeout = %s'%(len(client_sockets),len(serverSockets), selectTimeout))
 
 		# wait for socket activity with infinite timeout
 		ready_to_read, ready_to_write, in_error = select.select(client_sockets + serverSockets , [], [], selectTimeout)
