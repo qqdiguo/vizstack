@@ -115,7 +115,13 @@ numUsersPerGPU = 2
 
 
 # Parse command line options
-parser = OptionParser()
+parser = OptionParser(
+	usage="/opt/vizstack/sbin/vs-configure-system [options] <nodelist>",
+	description="""
+This command configures one or more nodes for VizStack. You need to pass in at-least a scheduler
+and a list of nodes that you want to configure VizStack with. Use the other options when you need
+them.
+""")
 parser.add_option("-s", "--scheduler", dest="scheduler", help = "Configure VizStack to use this scheduler. Possible values are : %s"%(validSchedulers))
 parser.add_option("-r", "--remote-network", dest="remote_network", help="Use this option to specify the network of the interface that you want to use for HP RGS(Remote Graphics Software) or TurboVNC connections. The value needs to be in a.b.c.d notation, typically with trailing zeros. E.g., 15.146.228.0 or 192.168.1.0, etc")
 parser.add_option("-f", "--fast-network", dest="fast_network", help="Use this option to specify the network of the interface that you want to use as a fast data network. This value needs to be in a.b.c.d notation, typically with trailing zeros. E.g., 192.168.2.0, 172.22.0.0 etc. This network is typically local to a cluster and is configured to use a fast network like InfiniBand.")
@@ -217,6 +223,12 @@ if 'localhost' in nodeList:
 	singleNode = True
 else:
 	singleNode = False
+
+# Sanity check: ensure that user cannot pass a nodename with "-x" that is not asked to be configured.
+for excNode in options.exclude_sharing:
+	if excNode not in nodeList:
+		print >>sys.stderr, "Node %s mentioned for exclusion from sharing(-x) is not in the list of nodes you have passed in for configuration."%(excNode)
+		sys.exit(-1)
 
 try:
 	# Get all known templates on this node
