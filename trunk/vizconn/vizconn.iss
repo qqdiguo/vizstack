@@ -3,7 +3,7 @@ Source: dist\*; DestDir: {app}
 [Setup]
 AppCopyright=Hewlett-Packard
 AppName=VizStack Remote Access
-AppVerName=VizStack Remote Access v1.1-0
+AppVerName=VizStack Remote Access v1.1-2
 RestartIfNeededByRun=false
 PrivilegesRequired=none
 InternalCompressLevel=ultra64
