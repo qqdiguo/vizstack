@@ -202,8 +202,8 @@ VSRPM=vizstack-${VIZSTACK_VERSION_COMPLETE}.`uname -m`.rpm
 VSRTRPM=vizrt-${VIZRT_VERSION_COMPLETE}.noarch.rpm
 if test "$DISTRO" == "debian"; then
 	echo "Converting RPM to DEB. DEB packages will be in the current directory"
-	fakeroot alien $RPM_PATH/RPMS/`uname -m`/$VSRPM
-	fakeroot alien $RPM_PATH/RPMS/noarch/$VSRTRPM
+	fakeroot alien -k $RPM_PATH/RPMS/`uname -m`/$VSRPM
+	fakeroot alien -k $RPM_PATH/RPMS/noarch/$VSRTRPM
 else
 	echo "Copying generated RPMS to the current directory"
 	cp $RPM_PATH/RPMS/`uname -m`/$VSRPM .
