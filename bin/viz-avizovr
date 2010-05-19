@@ -198,7 +198,7 @@ def removeConfig():
 		for row in range(rows):
 			hostname = screenLayout[row][col]['server'].getHostName()
 			if hostname not in [socket.gethostname(), 'localhost']:
-				screenLayout[row][col].run(['/bin/rm', '-f', '%s'%(config_file.name)])
+				screenLayout[row][col]['screen'].run(['/bin/rm', '-f', '%s'%(config_file.name)])
 	# The temp file is automatically removed
 	config_file.close()
 
