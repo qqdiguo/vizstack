@@ -318,20 +318,22 @@ You can use tiled displays which use resources only from a single node with this
 			bl = rtd_row[col_index]
 			scr = bl['screen']
 			resolution = scr.getFBProperty('resolution')
-			scr.setFBProperty('resolution', [resolution[0]+leftBezel, resolution[1]])
 			try:
 				position = scr.getFBProperty('position')
 			except:
 				# Some simple TDs may not have position set, so...
 				position = [0,0]
-			scr.setFBProperty('position', [position[0]+rtd_shift, position[1]])
 			if col_index == 0:
+				scr.setFBProperty('resolution', [resolution[0]+leftBezel, resolution[1]])
+				scr.setFBProperty('position', [position[0]+rtd_shift, position[1]])
 				for gpu in bl['gpus']:
 					gpuScanouts = gpu.getScanouts()
 					for pi in gpuScanouts:
 						thisScanout = gpuScanouts[pi]
 						newX = thisScanout['area_x']+leftBezel
 						gpu.setScanout(pi, display_device = thisScanout['display_device'], mode = thisScanout['mode'], outputX = newX, outputY = thisScanout['area_y'])
+			else:
+				scr.setFBProperty('position', [position[0]+rtd_shift+leftBezel, position[1]])
 			scr.setScreenNumber(scr.getScreenNumber()+rtd_screen_offset)
 			leftServer.addScreen(scr)
 
