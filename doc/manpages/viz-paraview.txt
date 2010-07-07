@@ -47,7 +47,13 @@ OPTIONS
     The resolution to run the X server at.
 
 *-r, --render-servers=NUM_RENDER_GPUS*::
-     The number of render nodes to use.
+     The number of GPUs to use for offscreen rendering.
+     By default, shared GPUs are allocated.
+
+*-x, --exclusive*::
+     Allocate dedicated GPUs for rendering. This is useful
+     if you intend to do GPU intensive operations like 
+     volume rendering. Applicable only with -r.
 
 *-p, --port=SERVER_PORT*::
      The port on which to start the ParaView server.
@@ -86,7 +92,7 @@ EXIT STATUS
 EXAMPLES
 --------
 
-To run ParaView in distributed rendering mode using 4 GPUs,
+To run ParaView in distributed rendering mode using 4 shared GPUs,
 
 *# viz-paraview -r 4*
 
@@ -110,6 +116,7 @@ To run ParaView with a local GUI :
 AUTHOR
 ------
 Manjunath Sripadarao <manjunaths@users.sourceforge.net>
+Shree Kumar <shreekumar@users.sourceforge.net>
 
 RESOURCES
 ---------

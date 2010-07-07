@@ -238,7 +238,7 @@ You can use tiled displays which use resources only from a single node with this
 		ra.stop()
 		sys.exit(-1)
 
-	print "Starting Desktop for user on Tiled Display '%s'"%(options.tiled_display_name)
+	print "Starting Desktop for user on Tiled Display '%s'..."%(options.tiled_display_name)
 
 	try:
 		# Get the first GPU
@@ -251,7 +251,11 @@ You can use tiled displays which use resources only from a single node with this
 
 		# Wait for the X servers to come up, default timeout
 		ra.waitXState(alloc, 1)
-
+		# Give user some information about what is running.
+		layout = tdInUse.getLayoutMatrix()
+		lastBlock = layout[-1][-1]
+		print
+		print "The desktop is running on host %s X server %s,\nwith a total resolution of %dx%d pixels"%(srv.getHostName(), srv.getDISPLAY(), lastBlock['rect_area'][2], lastBlock['rect_area'][3])
 		# Enable framelock if it is possible and not explicitly disabled
 		resList = alloc.getResources()
 		rg = resList[0]

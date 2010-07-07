@@ -81,7 +81,7 @@ export XAUTHORITY
 # Below command runs xinit
 # xinit in turn runs vs-X with the authfile we created above
 #
-xinit /opt/vizstack/bin/vs-wait-x -- /usr/X11R6/bin/vs-X $display -nolisten tcp -auth ${xserverauthfile} ${otherargs}
+xinit /opt/vizstack/bin/vs-wait-x -- /usr/X11R6/bin/vs-X $display -auth ${xserverauthfile} ${otherargs}
 
 # delete the server auth file
 # FIXME: we can move this to user-auth-add for great security - even

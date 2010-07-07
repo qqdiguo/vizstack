@@ -1152,18 +1152,18 @@ jobs. You may want to prioritize nodes with special characteristics so that reso
 from them are picked up last. 
 
 Every node has a 'weight' property. When selecting resources for user jobs,
-VizStack sorts nodes by their wieghts. Nodes with lower wieghts are prioritised ahead nodes
-with higher wieghts for resource allocation.
+VizStack sorts nodes by their weight. Nodes with lower weight are prioritised ahead nodes
+with higher weight for resource allocation.
 
-To set the wieghts for a node, edit the file /etc/vizstack/node_config.xml
-on the master node. Locate the "wieght" tag for the particular node, and
+To set the weight for a node, edit the file /etc/vizstack/node_config.xml
+on the master node. Locate the "weight" tag for the particular node, and
 change its value. The default value will be 0, as shown below
 ----
 ...
                 <node>
                         <hostname>localhost</hostname>
                         <model>ProLiant DL785 G5</model>
-                        <wieght>0</wieght>
+                        <weight>0</weight>
 			...
 		</node>
 ...
@@ -1171,7 +1171,7 @@ change its value. The default value will be 0, as shown below
 
 
 If you have only one special node which you want to be picked up last, then you may
-set the wieght to 1 to ensure this is picked up last. If you have multiple
+set the weight to 1 to ensure this is picked up last. If you have multiple
 nodes, and want to prioritize among them, then you need to setup a value for each
 separately.
 

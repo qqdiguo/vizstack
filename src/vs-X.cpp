@@ -342,8 +342,11 @@ void parentWaitTillSUIDExits(int ssmSocket, bool isShared, int suidChildPid, int
 				// was setup for it properly. And who will setup the signal mask ? The caller program, of course !
 				// This is relevant for both GDM as well as xinit
 				if(g_debugPrints)
-					printf("Parent INFO: Parent got SIGUSR1. Propagating to SUID child...\n");
-				kill(getppid(), SIGUSR1);
+					printf("Parent INFO: Parent got SIGUSR1. Propagating to original parent process(%d) to signal server ready...\n", getppid());
+				if(kill(getppid(), SIGUSR1)!=0)
+				{
+					perror("Propagating SIGUSR1 to parent failed");
+				}
 				break;
 		}
 
@@ -976,7 +979,7 @@ int main(int argc, char**argv)
 					{
 						case ALREADY_CONNECTED:
 							// abort here, saying that server is already running
-							fprintf(stderr, "X server %s is already running for you.", xdisplay);
+							fprintf(stderr, "X server %s is already running for you.\n", xdisplay);
 							exit(1);
 							break;
 						case SUCCESSFULLY_CONNECTED:
@@ -1089,7 +1092,8 @@ int main(int argc, char**argv)
 			string serverSocketAddr = "/var/run/vizstack/socket-";
 			serverSocketAddr += xdisplay;
 			strcpy(sa.sun_path, serverSocketAddr.c_str()); // on Linux, the path limit seems to be 118
-			sleep(3); // give time for the daemon process to accept connections
+			// FIXME: rationalize the delay below. Does it make sense to put a retry loop here ?
+			sleep(XSERVER_LOCK_DELAY*2+1); // give time for the daemon process to accept connections
 			if(connect(serverSocket, (sockaddr*) &sa, sizeof(sa.sun_family)+sizeof(sa.sun_path))==0)
 			{
 				// get the response to our connection
@@ -1455,11 +1459,10 @@ int main(int argc, char**argv)
 			if(!valNode.isEmpty())
 				ov.value = valNode.getValueAsString();
 
-			// don't allow anybody to sabotage our scheme.
-			if((ov.name == "config") || (ov.name=="sharevts") || (ov.name=="novtswitch") || (ov.name=="xinerama") || (ov.name=="layout"))
+			// don't allow anybody to sabotage our scheme - silently ignore such options!
+			if((ov.name == "-config") || (ov.name=="-sharevts") || (ov.name=="-novtswitch") || (ov.name=="+xinerama") || (ov.name=="-xinerama") || (ov.name=="-layout"))
 				continue;
 	
-			ov.name = "-" + ov.name;
 			cmdArgVal.push_back(ov);
 		}
 	}
@@ -1775,7 +1778,15 @@ int main(int argc, char**argv)
 				{
 					char cmd[4096];
 					sprintf(cmd, "xhost -si:localuser:%s",pwd.pw_name);
-					system(cmd);
+					if(system(cmd)!=0)
+					{
+						fprintf(stderr,"Failed to add access for remove access for user %s\n",pwd.pw_name);
+					}
+					else
+					{
+						if(g_debugPrints)
+							printf("Successfully removed access for user %s\n", pwd.pw_name);
+					}
 				}
 			}
 		}
@@ -1959,7 +1970,15 @@ int main(int argc, char**argv)
 					{
 						char cmd[4096];
 						sprintf(cmd, "xhost +si:localuser:%s",pwd.pw_name);
-						system(cmd);
+						if(system(cmd)!=0)
+						{
+							fprintf(stderr, "Failed to add access to user %s\n", pwd.pw_name);
+						}
+						else
+						{
+							if(g_debugPrints)
+								printf("Successfully added access for user %s\n", pwd.pw_name);
+						}
 					}
 				}
 				// send the response
