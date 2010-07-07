@@ -1,7 +1,7 @@
 Summary: VizStack Remote Access Tools
 Name: vizrt
 Version: 1.1
-Release: 2
+Release: 3
 License: GPLV2
 Group: Applications/Internet
 URL: http://vizstack.sourceforge.net
@@ -32,6 +32,9 @@ rm -rf $RPM_BUILD_ROOT
 
 
 %changelog
+* Wed Jun 7 2010 Shree Kumar <shreekumar@hp.com>
+- Bumped up version string to 1.1-3, keeping in sync with VizStack.
+
 * Mon May 17 2010 Shree Kumar <shreekumar@hp.com>
 - Bumped up version string to 1.1-2, Changes being
   - Added GPL license page

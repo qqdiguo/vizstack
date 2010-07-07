@@ -309,9 +309,10 @@ You can use tiled displays which use resources only from a single node with this
 		resolution = scr.getFBProperty('resolution')
 		scr.setFBProperty('resolution', [resolution[0]+rightBezel, resolution[1]])
 
-	# Compensate for the left bezel on all screens on the right tiled display
+	# Compensate for left & right bezel on all screens consittuting column 0 on the right tiled display
+	# Shift the other screen positions by this much
 	# Add each screen on the right server to the left server
-	rtd_shift = ltd[0][ltd_last_col]['rect_area'][2]+rightBezel
+	rtd_shift = ltd[0][ltd_last_col]['rect_area'][2]
 	rtd_screen_offset = len(ltd)*len(ltd[0])
 	for rtd_row in rtd:
 		for col_index in range(len(rtd_row)):
@@ -324,16 +325,16 @@ You can use tiled displays which use resources only from a single node with this
 				# Some simple TDs may not have position set, so...
 				position = [0,0]
 			if col_index == 0:
-				scr.setFBProperty('resolution', [resolution[0]+leftBezel, resolution[1]])
+				scr.setFBProperty('resolution', [resolution[0]+leftBezel+rightBezel, resolution[1]])
 				scr.setFBProperty('position', [position[0]+rtd_shift, position[1]])
 				for gpu in bl['gpus']:
 					gpuScanouts = gpu.getScanouts()
 					for pi in gpuScanouts:
 						thisScanout = gpuScanouts[pi]
-						newX = thisScanout['area_x']+leftBezel
+						newX = thisScanout['area_x']+leftBezel+rightBezel
 						gpu.setScanout(pi, display_device = thisScanout['display_device'], mode = thisScanout['mode'], outputX = newX, outputY = thisScanout['area_y'])
 			else:
-				scr.setFBProperty('position', [position[0]+rtd_shift+leftBezel, position[1]])
+				scr.setFBProperty('position', [position[0]+rtd_shift+leftBezel+rightBezel, position[1]])
 			scr.setScreenNumber(scr.getScreenNumber()+rtd_screen_offset)
 			leftServer.addScreen(scr)
 

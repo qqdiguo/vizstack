@@ -875,7 +875,7 @@ Assume that you are sitting on your desktop system - which may be a Windows
 or a Linux desktop or laptop. You also have ParaView installed on this machine.
 You would next connect to your VizStack system using SSH. After that, you 
 need to start the ParaView server inside the SSH session. Let's say you want
-to use four GPUs for rendering.
+to use four shared GPUs (and four CPUs) for rendering.
 ----
 $ viz-paraview -r 4
 Waiting 4 seconds for the MPI fabric to bring up the servers...Listen on port: 11113

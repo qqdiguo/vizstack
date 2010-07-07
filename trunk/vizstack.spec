@@ -1,7 +1,7 @@
 Summary: Software to convert one/more machines with GPUs into a sharable, multi-user, multi-session visualization resource.
 Name: vizstack
 Version: 1.1
-Release: 2
+Release: 3
 License: GPLV2
 Group: Development/Tools
 URL: http://vizstack.sourceforge.net
@@ -54,6 +54,25 @@ rm -rf $RPM_BUILD_ROOT
 /opt/vizstack/man/man1/
 
 %changelog
+* Wed Jun 7 2011 Shree Kumar <shreekumar@hp.com>
+- Updated version number to 1.1-3
+   - Few bug fixes
+     - vs-manage-tiled-displays
+     - Single GPU discovert issue on SLES
+     - Fixed bad merge : included clip_last_block
+     - Resource allocation sorting bug
+     - Multiple shared servers in the same allocation
+       weren't starting up right. Fixed this via a delay.
+     - Updating state of multiple shared servers needed
+       a uniq operation. Added that.
+   - Paraview script now supports shared GPUs for rendering.
+   - Minor vsapi changes
+     - include a hyphen(-) in the options for servers
+       this allows usage of both - and +
+   - Minor doc fixes
+   - SSM can now take paths to various files. These are
+     added for developer usage only.
+
 * Mon May 17 2010 Shree Kumar <shreekumar@hp.com>
 - Updated version number to 1.1-2
    - Many bug fixes

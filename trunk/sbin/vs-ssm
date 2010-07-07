@@ -53,12 +53,26 @@ import logging
 import logging.config
 import calendar
 import array
+from optparse import OptionParser, OptionGroup
 
 g_logger = None
+g_master_file = vsapi.masterConfigFile
+g_node_file = vsapi.nodeConfigFile
+g_rg_file = vsapi.rgConfigFile
+g_system_template_dir = vsapi.systemTemplateDir
+g_override_template_dir = vsapi.overrideTemplateDir
+
+TRACE=15
+
+def trace(msg):
+	global g_logger
+	g_logger.log(TRACE, msg)
 
 def setupLogging():
 
 	global g_logger
+
+	logging.addLevelName(TRACE, 'TRACE')
 
 	try:
 		logging.config.fileConfig('/etc/vizstack/ssm-logging.conf')
@@ -899,8 +913,8 @@ def processQueryResourceMessage(userInfo, queryNode, sysConfig):
 	# Else send out the list, which may be empty - meaning no matches
 	ret = "<ssm><response><status>0</status><return_value>"
 	for item in resultList:
-		ret += item.serializeToXML()
-	ret += "</return_value></response></ssm>"
+		ret = "%s%s"%(ret,item.serializeToXML())
+	ret = "%s</return_value></response></ssm>"%(ret)
 
 	return ret
 	
@@ -1083,12 +1097,13 @@ def processGetTemplatesMessage(getTemplatesNode, sysConfig):
 	return ret
 
 def processRefreshRGMessage(refreshRGNode, sysConfig, userInfo):
+	global g_rg_file
 	g_logger.debug('Processing RefreshRG message')
 	try:
 		if userInfo['uid'] != 0:
 			raise vsapi.VizError(vsapi.VizError.ACCESS_DENIED, "Only root is allowed to refresh SSM's resource groups")
 
-		resgroups = vsutil.loadResourceGroups(sysConfig)
+		resgroups = vsutil.loadResourceGroups(sysConfig, g_rg_file)
 	except vsapi.VizError, e:
 		return """<ssm>
 		<response>
@@ -1324,65 +1339,78 @@ def processMessage(ms, msgDom, sysConfig, ssmState, client, all_clients):
 	rootNode = msgDom.getElementsByTagName("ssm")
 
 	response = ""
+	request = ""
 	badRequest = True
 
 	allocateNode = domutil.getChildNode(rootNode[0], req_allocate)
 	if allocateNode != None:
+		request = req_allocate
 		badRequest = False
 		response = processAllocateMessage(ms, client, allocateNode, ssmState, sysConfig)
 
 	attachNode = domutil.getChildNode(rootNode[0], req_attach)
 	if attachNode != None:
+		request = req_attach
 		badRequest = False
 		response = processAttachMessage(userInfo, attachNode, ssmState)
 
 	deallocateNode = domutil.getChildNode(rootNode[0], req_deallocate)
 	if deallocateNode != None:
+		request = req_deallocate
 		badRequest = False
 		response = processDeallocateMessage(ms, userInfo, deallocateNode, ssmState, all_clients)
 
 	queryNode = domutil.getChildNode(rootNode[0], req_query_resource)
 	if queryNode != None:
+		request = req_query_resource
 		badRequest = False
 		response = processQueryResourceMessage(userInfo, queryNode, sysConfig)
 
 	queryNode = domutil.getChildNode(rootNode[0], req_query_allocation)
 	if queryNode != None:
+		request = req_query_allocation
 		badRequest = False
 		response = processQueryAllocationMessage(userInfo, queryNode, ssmState)
 
 	updateConfigNode = domutil.getChildNode(rootNode[0], req_update_serverconfig)
 	if updateConfigNode != None:
+		request = req_update_serverconfig
 		badRequest = False
 		response = processUpdateServerConfigMessage(userInfo, updateConfigNode, ssmState)
 
 	getConfigNode = domutil.getChildNode(rootNode[0], req_get_serverconfig)
 	if getConfigNode != None:
+		request = req_get_serverconfig
 		badRequest = False
 		response = processGetServerConfigMessage(userInfo, getConfigNode, ssmState)
 
 	waitXStateNode = domutil.getChildNode(rootNode[0], req_wait_x_state)
 	if waitXStateNode != None:
+		request = req_wait_x_state
 		badRequest = False
 		response = processWaitXStateMessage(client, userInfo, waitXStateNode, ssmState)
 
 	updateXAvailNode = domutil.getChildNode(rootNode[0], req_update_x_avail)
 	if updateXAvailNode != None:
+		request = req_update_x_avail
 		badRequest = False
 		response = processUpdateXAvailMessage(client, userInfo, updateXAvailNode, ssmState)
 
 	stopXServerNode = domutil.getChildNode(rootNode[0], req_stop_x_server)
 	if stopXServerNode != None:
+		request = req_stop_x_server
 		badRequest = False
 		response = processStopXServerMessage(all_clients, client, userInfo, stopXServerNode, ssmState)
 
 	getTemplatesNode = domutil.getChildNode(rootNode[0], req_get_templates)
 	if getTemplatesNode != None:
+		request = req_get_templates
 		badRequest = False
 		response = processGetTemplatesMessage(getTemplatesNode, sysConfig)
 
 	refreshRGNode = domutil.getChildNode(rootNode[0], req_refresh_resource_groups)
 	if refreshRGNode != None:
+		request = req_refresh_resource_groups
 		badRequest = False
 		response = processRefreshRGMessage(refreshRGNode, sysConfig, userInfo)
 
@@ -1393,8 +1421,8 @@ def processMessage(ms, msgDom, sysConfig, ssmState, client, all_clients):
 		return False
 
 	if len(response)>0:
+		trace("Processed '%s' message, replying with msg of size = %d"%(request, len(response)))
 		# send the response to the client
-		g_logger.debug("Responding to client with this message (len %d):"%(len(response)))
 		g_logger.debug("========================================")
 		logsprint(g_logger.debug,response)
 		g_logger.debug("========================================")
@@ -1605,7 +1633,7 @@ def mainLoop(authType, ms, sysConfig, ssmState, serverSockets, client_info):
 
 			# process message : decode, validate and act upon it.
 			if dom:
-				g_logger.debug('Processing message from Client:')
+				trace("Processing message from Client. Size = %d bytes"%(len(data)))
 				g_logger.debug('===============================')
 				logsprint(g_logger.debug,data)
 				g_logger.debug('===============================')
@@ -2007,13 +2035,20 @@ if not ((os.getuid()==0) and (os.getgid()==0)):
 	sys.exit(-1)
 
 def ssm_body():
-
+	global g_node_file, g_rg_file, g_master_file
 	setupLogging()
 
 	g_logger.info('SSM Starting Up')
 	try:
-		g_logger.info('Loading configuration file')
-		sysConfig = vsutil.loadLocalConfig()
+		g_logger.info('Using these configuration file paths:')
+		g_logger.info('----------------------------------------------------------')
+		g_logger.info('  Master Configuration File         => %s'%(g_master_file))
+		g_logger.info('  Node Configuration File           => %s'%(g_node_file))
+		g_logger.info('  Resource Group Configuration File => %s'%(g_rg_file))
+		g_logger.info('  System Templates Directory        => %s'%(g_system_template_dir))
+		g_logger.info('  Override Templates Directory      => %s'%(g_override_template_dir))
+		g_logger.info('----------------------------------------------------------')
+		sysConfig = vsutil.loadLocalConfig(False, g_master_file, g_node_file, g_rg_file, g_system_template_dir, g_override_template_dir)
 	except vsapi.VizError, e:
 		g_logger.error('Error loading configuration : %s'%(str(e)))
 		sys.exit(1)
@@ -2087,7 +2122,7 @@ def ssm_body():
 	if configHost == "localhost":
 		allNodes =  sysConfig['nodes'].keys()
 		if (len(allNodes)>1) or (allNodes[0]!="localhost"):
-			g_logger.debug("If the master is on localhost, then only one node 'localhost' is allowed")
+			g_logger.error("If the master is on localhost, then only one node 'localhost' is allowed")
 			sys.exit(-1)
 
 	serverSockets = []
@@ -2165,7 +2200,10 @@ def ssm_body():
 
 	
 	# create a metascheduler to manage them
-	ms = metascheduler.Metascheduler(sysConfig['nodes'], sysConfig['schedulerList'])
+	nodeList = []
+	for nodeName in sysConfig['nodes']:
+		nodeList.append(sysConfig['nodes'][nodeName])
+	ms = metascheduler.Metascheduler(nodeList, sysConfig['schedulerList'])
 
 	# Enter the mainloop, while being prepared to handle ^C !
 	try:
@@ -2177,9 +2215,12 @@ def ssm_body():
 			g_logger.info(line)
 		#traceback.print_exc(file=sys.stdout)
 	except:
-		g_logger.info('Caught unexpected exception')
+		g_logger.info('Caught unexpected exception; please contact developers with the the log file !')
+		g_logger.info('Stack Trace is ')
+		g_logger.info('---------------')
 		for line in traceback.format_exc().split('\n'):
 			g_logger.info(line)
+		g_logger.info('---------------')
 		#traceback.print_exc(file=sys.stdout)
 
 	# Cleanup all clients connected to us at this point in time
@@ -2226,22 +2267,45 @@ class SSMDaemon(Daemon):
 		ssm_body()
 
 ssm = SSMDaemon("/var/run/vs-ssm.pid")
-if len(sys.argv) != 2:
-	print >>sys.stderr, "Usage: %s start|stop|restart|status|nodaemon"%(sys.argv[0])
+
+parser = OptionParser(usage="%s [options] <start|stop|restart|status|nodaemon>")
+devopts = OptionGroup(parser, "Options meant for developer use (development/debugging)")
+devopts.add_option("--node-config", dest="node_config_file", type="string", default=g_node_file, help="The node configuration file. Defaults to %s"%(g_node_file))
+devopts.add_option("--resource-group-config", dest="rg_config_file", type="string", default=g_rg_file, help="The resource group configuration file. Defaults to %s"%(g_rg_file))
+devopts.add_option("--system-templates", dest="system_template_dir", type="string", default=g_system_template_dir, help="Load system templates from this directory. Defaults to %s"%(g_system_template_dir))
+devopts.add_option("--override-templates", dest="override_template_dir", type="string", default=g_override_template_dir, help="Load override templates from this directory. Defaults to %s"%(g_override_template_dir))
+parser.add_option_group(devopts)
+
+(options,args)=parser.parse_args(sys.argv[1:])
+
+if len(args) != 1:
+	print >>sys.stderr, "You need to specify one (and only one) command. One of start, stop, restart, status, nodaemon"
+	parser.print_help()
 	sys.exit(2)
 
-if 'nodaemon' == sys.argv[1]:
+g_node_file = options.node_config_file
+g_rg_file = options.rg_config_file
+g_override_template_dir = options.override_template_dir
+g_system_template_dir = options.system_template_dir
+
+for fname in [g_node_file, g_rg_file, g_override_template_dir, g_system_template_dir]:
+	if not os.access(fname, os.F_OK):
+		print >>sys.stderr, "Invalid Configuration File/Directories specified: %s either does not exist, or can't be accessed."%(fname)
+		sys.exit(2)
+
+cmd = args[0]
+if 'nodaemon' == cmd:
 	ssm_body()
-elif 'start' == sys.argv[1]:
+elif 'start' == cmd:
 	ssm.start()
-elif 'stop' == sys.argv[1]:
+elif 'stop' == cmd:
 	ssm.stop()
-elif 'status' == sys.argv[1]:
+elif 'status' == cmd:
 	ssm.status()
-elif 'restart' == sys.argv[1]:
+elif 'restart' == cmd:
 	ssm.restart()
 else:
-	print >>sys.stderr, "Unknown command : %s"%(sys.argv[1])
+	print >>sys.stderr, "Unknown command : %s"%(cmd)
 	sys.exit(2)
 
 sys.exit(0)

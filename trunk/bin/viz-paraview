@@ -93,8 +93,8 @@ def determineServerPort(rows, cols, layoutConfig, server_port):
     if server_port is not None:
         return server_port
 
-    server_port = default_base_server_port
     rank0hostName = None
+    port_offset = 0
     for row in range(rows):
         for col in range(cols):
             thisScreen = layoutConfig[row][col]['screen']
@@ -107,11 +107,12 @@ def determineServerPort(rows, cols, layoutConfig, server_port):
                         screens = thisServer.getScreens()
                         for screen in screens:
                             for gpu in screen.getGPUs():
-                                server_port += 1 << gpu.getIndex()
+                                port_offset = port_offset | (1 << gpu.getIndex())
                 else:
                     gpus = thisScreen.getGPUs()
                     for gpu in gpus:
-                        server_port += 1 << gpu.getIndex()
+                        port_offset = port_offset | (1 << gpu.getIndex())
+    server_port = default_base_server_port + port_offset
     return server_port
 
 def createParaviewTDConfigFile(fastNetworkMap, mpilib, rows, cols, allocRG, allocId, port):
@@ -139,15 +140,14 @@ def createParaviewTDConfigFile(fastNetworkMap, mpilib, rows, cols, allocRG, allo
     f.flush()
     return f
 
-def createParaviewDRAppFile(fastNetworkMap, mpilib, resources, allocId, port):
+def createParaviewDRAppFile(fastNetworkMap, mpilib, allServers, allocId, port):
     try:
         appfileobj = tempfile.NamedTemporaryFile()
     except IOError, e:
         print >> sys.stderr, e.str()
         return None
-    for resource in resources:
-        thisScreen = resource[1].getScreen(0)
-	thisServer = resource[1]
+    for thisServer in allServers:
+        thisScreen = thisServer.getScreen(0)
         cmd = ""
         cmd += "%s 1 "%(mpiOptNames[mpilib]['nnodes'])
         cmd += "%s %s "%(mpiOptNames[mpilib]['host'], fastNetworkMap[thisServer.getHostName()])
@@ -155,6 +155,11 @@ def createParaviewDRAppFile(fastNetworkMap, mpilib, resources, allocId, port):
             cmd += "%s LD_LIBRARY_PATH=%s "%(mpiOptNames[mpilib]['varexport'], mpiOptNames[mpilib]['LD_LIBRARY_PATH'])
         cmd += "%s DISPLAY=:%d.%d "%(mpiOptNames[mpilib]['varexport'], thisServer.getIndex(), thisScreen.getScreenNumber())
         cmd += "pvserver -sp=%d"%(port)
+        # Enable offscreen rendering, so two processes assigned to the 
+        # same GPU will not clash on the same framebuffer
+        # Also, enabling offscreen rendering guarantees correct rendering
+        # irrespective of the framebuffer resolution.
+        cmd += " --use-offscreen-rendering"
 	print >>appfileobj, cmd
     appfileobj.flush()
     return appfileobj
@@ -243,15 +248,16 @@ def cleanupServerFile(server_url):
     xmldoc.writexml(open(server_file, 'w'))
 
 # Used only in Distributed Rendering Mode (DR)    
-def createParaviewDRFiles(fastNetworkMap, mpilib, server, resources, allocId, port):
+def createParaviewDRFiles(fastNetworkMap, mpilib, server, allServers, allocId, port):
     server_url = createParaviewServerFile(mpilib, server, allocId, port)
-    return (server_url, createParaviewDRAppFile(fastNetworkMap, mpilib, resources, allocId, port))
+    return (server_url, createParaviewDRAppFile(fastNetworkMap, mpilib, allServers, allocId, port))
 
 def parseArgs(arg_list):
 	parser = OptionParser()
 	parser.add_option("-t", "--tiled-display", action="store", type="string", dest="display_tile", help="The tiled display to use for the job.")
 	parser.add_option("-m", "--display-mode", dest="display_mode", help="The resolution to run the displays at, applicable only with -t.")
-        parser.add_option("-r", "--render-servers", action="store", type="int", dest="num_render_gpus", help="The number of render GPUs to use.")
+        parser.add_option("-r", "--render-servers", action="store", type="int", dest="num_render_gpus", help="The number of render GPUs to use for offscreen rendering.")
+	parser.add_option("-x", "--exclusive", dest="exclusive", action="store_true", default=False, help="Allocate dedicated GPUs for rendering. By default, shared GPUs are allocated for offscreen rendering.")
         parser.add_option("-p", "--port", action="store", type="int", dest="server_port", help="The port on which the server runs. This is typically determined dynamically based on the GPUs allocated for ParaView on the node that runs the server process. Use this option if you need to force the server to run on a specific port.")
         parser.add_option("-c", "--connect-to", action="store", type="string", dest="connect_to", help="Connect to a listening Paraview client. You could use this if outgoing firewall connections are allowed.")
         parser.add_option("-l", "--local", action="store_true", dest="local_only", default=False, help="Use this option if you want the script to start a ParaView client on the local desktop. By default, only the ParaView server is started, allowing you to connect to the ParaView server using the ParaView client running on your desktop.")
@@ -272,22 +278,31 @@ def parseArgs(arg_list):
             
 	return (options, args)
 
-def distributedRenderingMode(fastNetworkMap, mpilib, res_access, num_gpus, server_port):
-    spec = [[ vsapi.GPU(), vsapi.Server() ]]*num_gpus
+def distributedRenderingMode(isExclusive, fastNetworkMap, mpilib, res_access, num_gpus, server_port):
+    if isExclusive:
+        spec = [[ vsapi.GPU(), vsapi.Server() ]]*num_gpus
+    else:
+        spec = [ vsapi.GPU(isShared=True) ]*num_gpus
     alloc1 = res_access.allocate(spec)
     display_res = [1024,768] # choose a low resolution to run the servers at. Why waste memory on a large FB?
     resources = alloc1.getResources()
     hostName = None
     gpu_indices = []
-    for resource in resources: 
-        gpu = resource[0]
+    allServers = []
+    for resource in resources:
+        if isExclusive:
+            gpu = resource[0]
+            srv = resource[1]
+        else:
+            gpu = resource
+            srv = gpu.getSharedServer()
+
         if(hostName == None):
             hostName = gpu.getHostName()
             gpu_indices.append(gpu.getIndex())
         else:
             if(hostName == gpu.getHostName()): # All the GPUs belonging to the first host in the server list, this is where the primary mpi daemon connects to
                 gpu_indices.append(gpu.getIndex())
-        srv = resource[1]
         scr = vsapi.Screen(0)
         if gpu.getAllowNoScanOut():
             gpu.clearScanouts()
@@ -300,24 +315,27 @@ def distributedRenderingMode(fastNetworkMap, mpilib, res_access, num_gpus, serve
                 gpu.setScanout(0, 'HP LP2065', sc[0][0])
         scr.setGPU(gpu)
         srv.addScreen(scr)
+        allServers.append(srv)
 
     global default_base_server_port
 
     # If a server port is not given, compute it
     if server_port is None:
-        server_port = default_base_server_port
+        port_offset = 0
         # Automatically determine the port, this is needed so that more than one users on sharing a node (by sharing the GPU) do not bump into each other
         # by using the same port
         for gpu_index in gpu_indices:
-            server_port += 1 << gpu_index
+            port_offset = port_offset | (1 << gpu_index)
+        server_port = default_base_server_port + port_offset
     
     # The first one is the display_group, the rest are the render gpus, so iterate only through render resources.
     # The render resources are of the form [GPU-0, Server-0, GPU-1, Server-1,...,GPU-n, Server-n], so iterate in steps of 2.
-    (server_url, config_file) = createParaviewDRFiles(fastNetworkMap, mpilib, resources[0][1].getHostName(), resources, alloc1.getId(), server_port)  # resources[0][1] -> will be the server with a rank of 0
+    masterHost = allServers[0].getHostName()
+    (server_url, config_file) = createParaviewDRFiles(fastNetworkMap, mpilib, masterHost, allServers, alloc1.getId(), server_port)  # resources[0][1] -> will be the server with a rank of 0
     #os.system('cat %s'%(config_file.name))
-    client_cmd = [ 'paraview', '-s=%s'%(server_url.replace("cs://","").replace(":","_")) ] # -tdx=%d -tdy=%d'%(cmdPrefix, resources[0][1].getHostName(), cols, rows)
+    client_cmd = [ 'paraview', '-s=%s'%(server_url.replace("cs://","").replace(":","_")) ] # -tdx=%d -tdy=%d'%(cmdPrefix, masterHost, cols, rows)
     server_cmd = [ mpiOptNames[mpilib]['mpirun'], mpiOptNames[mpilib]['appfile'], config_file.name ]
-    return (alloc1, client_cmd, server_cmd, config_file, server_url, resources[0][1].getScreen(0))
+    return (alloc1, client_cmd, server_cmd, config_file, server_url, allServers[0].getScreen(0))
 
 def tiledDisplayMode(fastNetworkMap, mpilib, res_access, tiled_display, display_mode, port):
     # Allocate requested resources
@@ -386,7 +404,7 @@ server_url = None
 if(options.display_tile):
     (alloc1, client_cmd, server_cmd, config_file, server_url, runner) = tiledDisplayMode(fastNetworkMap, mpilib, res, options.display_tile, display_mode, server_port)
 else:
-    (alloc1, client_cmd, server_cmd, config_file, server_url, runner) = distributedRenderingMode(fastNetworkMap, mpilib, res, options.num_render_gpus, server_port)
+    (alloc1, client_cmd, server_cmd, config_file, server_url, runner) = distributedRenderingMode(options.exclusive, fastNetworkMap, mpilib, res, options.num_render_gpus, server_port)
 
 if(alloc1 == None):
     print >> sys.stderr, "Allocation failed"

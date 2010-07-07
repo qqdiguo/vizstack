@@ -286,7 +286,7 @@ system("$xauth -f $xauthorityFile add $host/unix:$displayNumber . $cookie");
 
 # Now start the X VNC Server
 $cmd = "/opt/vizstack/bin/vs-Xv"; # Use the VizStack wrapper to run the server...
-$cmd .= " /opt/TurboVNC/bin/Xvnc :$displayNumber";
+$cmd .= " :$displayNumber /opt/TurboVNC/bin/Xvnc";
 $cmd .= " -desktop " . &quotedString($desktopName);
 $cmd .= " -httpd $vncClasses";
 $cmd .= " -auth $xauthorityFile";

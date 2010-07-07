@@ -95,15 +95,16 @@ class Allocation:
 		return self.allocatedResources
 
 class Metascheduler:
-	def __init__(self, nodeMap, schedList):
+	def __init__(self, allNodes, schedList):
 		self.allocations = []
 
 		vizResourceList = []
 		nodeWeightWhenFree = {}
-		for nodeName in nodeMap:
-			nodeWeightWhenFree[nodeName] = 0
-			node= nodeMap[nodeName]
+		nodeMap = {}
+		for node in allNodes:
+			nodeWeightWhenFree[node.getHostName()] = 0
 			vizResourceList = vizResourceList + node.getResources()
+			nodeMap[node.getHostName()] = node
 
 		# we keep a hash table to let us easily get to the object by name
 		# we keep references to the original objects. The allocation
@@ -511,11 +512,15 @@ class Metascheduler:
 			if not availResourcesByNodeName.has_key(nodeName):
 				raise VizError(VizError.USER_ERROR, "Can't allocate resources. Node name '%s' is not available for allocation"%(nodeName))
 			nodeFreeRes = availResourcesByNodeName[nodeName]
+
+			# Sort free list by weight; this ensures that matching items with lower weight will 
+			# be picked up first
+			nodeFreeRes.sort(lambda x,y:x.getAllocationWeight()-y.getAllocationWeight())
 		
 			allocThese, remainingAvail = self.__resourceMatchDOF2(resToBeAllocated, nodeFreeRes, userInfo['uid'])
 			if allocThese is None:
 				# This shouldn't happen at all. If it does, it's a bug in our algorithm
-				raise VizError(VizError.INTERNAL_ERROR, "Couldn't allocate a DOF=2 requirement. Please contact the developers")
+				raise VizError(VizError.INTERNAL_ERROR, "Couldn't allocate a DOF=2 requirement. Please check your resource list")
 
 			# Got the resources...
 

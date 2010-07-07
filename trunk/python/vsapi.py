@@ -40,6 +40,8 @@ import sys
 masterConfigFile = '/etc/vizstack/master_config.xml'
 nodeConfigFile = '/etc/vizstack/node_config.xml'
 rgConfigFile = '/etc/vizstack/resource_group_config.xml'
+systemTemplateDir = '/opt/vizstack/share/templates/'
+overrideTemplateDir = '/etc/vizstack/templates/'
 
 SSM_UNIX_SOCKET_ADDRESS = "/tmp/vs-ssm-socket"
 NORMAL_SERVER = "normal"
@@ -2549,10 +2551,10 @@ class Server(VizResource):
 		self.setXExtensionSectionOption('Composite','Disable')
 
 		# Disable power-save and screen saver
-		self.setArg('dpms')
-		self.setArg('s', 'off')
+		self.setArg('-dpms')
+		self.setArg('-s', 'off')
 		# Disable TCP access by default.
-		self.setArg('nolisten', 'tcp')
+		self.setArg('-nolisten', 'tcp')
 
 	def setArg(self, argName, argVal=None):
 		"""
@@ -2672,8 +2674,8 @@ class Server(VizResource):
 		return False
 
 	def getDISPLAY(self):
-		if not self.hasValidRuntimeConfig():
-			raise VizError(VizError.BAD_CONFIGURATION, "This server isn't valid.")
+		#if not self.hasValidRuntimeConfig():
+		#	raise VizError(VizError.BAD_CONFIGURATION, "This server isn't valid.")
 		srvNum = self.getIndex()
 		return ":%d"%(srvNum)
 
@@ -3103,6 +3105,7 @@ class TiledDisplay(ResourceGroupHandler):
 		self.remap_display_outputs = None 
 		self.bezels = None
 		self.framelock = False # Disable framelock by default
+		self.clip_last_block = None # No clipping for the last block
 		self.rotate = None
 
 		self.matchedDD = None
@@ -3147,9 +3150,7 @@ class TiledDisplay(ResourceGroupHandler):
 		if (self.bezels is not None) and (self.bezels not in TiledDisplay.__validBezelModes):
 			raise ValueError, "Bad value for Bezel Mode(%s). Valid values are None, 'all', 'disable' and 'desktop'"%(self.bezels)
 		if paramsDict.has_key('framelock'): self.framelock = paramsDict['framelock']
-		if self.framelock not in [True, False]:
-			raise ValueError, "Bad value for framelock(%s). Must be one of True/False"%(self.framelock)
-
+		if paramsDict.has_key('clip_last_block'): self.clip_last_block = paramsDict['clip_last_block']
 	def getParam(self, paramName):
 		if paramName == 'num_blocks':
 			return self.num_blocks
@@ -3177,6 +3178,8 @@ class TiledDisplay(ResourceGroupHandler):
 			return self.bezels
 		elif paramName == 'framelock':
 			return self.framelock
+		elif paramName == 'clip_last_block':
+			return self.clip_last_block
 		else:
 			raise ValueError, "Unknown parameter '%s'"%(paramName)
 
@@ -3207,6 +3210,8 @@ class TiledDisplay(ResourceGroupHandler):
 			self.bezels = paramValue
 		elif paramName == 'framelock':
 			self.bezels = paramValue
+		elif paramName == 'clip_last_block':
+			self.clip_last_block = paramValue
 		else:
 			raise ValueError, "Unknown parameter '%s'"%(paramName)
 
@@ -3305,6 +3310,24 @@ class TiledDisplay(ResourceGroupHandler):
 				repeatUsage[po]=None
 			if len(repeatUsage) != len(self.remap_display_outputs):
 				raise ValueError, "One or more port numbers specified more than once."
+
+		if self.framelock not in [True, False]:
+			raise ValueError, "Bad value for framelock(%s). Must be one of True/False"%(self.framelock)
+
+		if self.clip_last_block is not None:
+			clb = self.clip_last_block
+			if (not isinstance(clb, list)):
+				raise TypeError, "Expecting a two element list for 'clip_last_block'. Got %s"%(clb)
+			if len(clb)!=2:
+				raise ValueError, "Expecting a two element list for 'clip_last_block'. Got %s"%(clb)
+			if (clb[0] is not None) and (not isinstance(clb[0], int)):
+				raise ValueError, "The first element of 'clip_last_block' must be an integer or None. Got %s"%(clb[0])
+			if (clb[1] is not None) and (not isinstance(clb[1], int)):
+				raise ValueError, "The second element of 'clip_last_block' must be an integer or None. Got %s"%(clb[1])
+			if ((clb[0] is not None) and (clb[0]<1)) or ((clb[1] is not None) and (clb[1]<1)):
+				raise ValueError, "The elements of 'clip_last_block' may not be less than 1. The used value was %s"%(clb)
+			if ((clb[0] is not None) and (clb[0]>self.block_display_layout[0])) or ((clb[1] is not None) and (clb[1]>self.block_display_layout[1])):
+				raise ValueError, "The elements of 'clip_last_block'(%s) may not greater than 'block_display_layout'(%s)"%(clb, self.block_display_layout)
 			
 		# check that the required number of GPUs are present in rgObj's allocation
 		# if combine_displays is true, then additionally we'll require that each reqlist has the same
@@ -3315,8 +3338,8 @@ class TiledDisplay(ResourceGroupHandler):
 		for innerRes in resources:
 			# we must have one X server
 			server = extractObjects(Server, innerRes)
-			if len(server)!=1:
-				raise ValueError, "Each reslist must have exactly one X server"
+			if len(server)<1:
+				raise ValueError, "Each reslist must have atleast one X server"
 			if server[0].getType() not in [None, NORMAL_SERVER]:
 				raise ValueError, "Each reslist must have one normal X server"
 			kbd = extractObjects(Keyboard, innerRes)
@@ -3368,7 +3391,10 @@ class TiledDisplay(ResourceGroupHandler):
 
 		# Find a matching display device. 
 		if isinstance(self.validateAgainst, ResourceAccess):
-			candidateList = self.validateAgainst.getTemplates()
+			try:
+				candidateList = self.validateAgainst.getTemplates(DisplayDevice(self.display_device))
+			except VizError, e:
+				raise ValueError, "Invalid display device '%s'"%(self.display_device)
 		else:
 			candidateList = self.validateAgainst
 
@@ -3517,6 +3543,11 @@ class TiledDisplay(ResourceGroupHandler):
 		else:
 			forceBezel = False
 
+		if self.bezels == 'desktop':
+			desktopBezel = True
+		else:
+			desktopBezel = False
+
 		# Clear bezels if asked to
 		if self.bezels == 'disable':
 			for side in ['left','right','bottom','top']:
@@ -3551,6 +3582,17 @@ class TiledDisplay(ResourceGroupHandler):
 			topEdge = 'top'
 			bottomEdge = 'bottom'
 
+		# Get the clip value for the last block
+		clb = self.clip_last_block
+		# No value specified implies no clipping
+		if clb is None:
+			clb = self.block_display_layout
+		# If one of the values is None, then it is assumed to mean "no clipping is needed in this direction" 
+		if clb[0] is None:
+			clb[0] = self.block_display_layout[0]
+		if clb[1] is None:
+			clb[1] = self.block_display_layout[1]
+		#print 'clip_last_block = ', clb
 		# Now, walk the blockLayout matrix 
 		# Populate the screens with the GPUs
 		# and compute coordinates
@@ -3567,6 +3609,16 @@ class TiledDisplay(ResourceGroupHandler):
 					fbHeight = 0
 					lastSubRow = self.block_display_layout[1]-1
 					lastSubCol = self.block_display_layout[0]-1
+
+					# Clip if last col
+					if col==lastSubCol:
+						if (lastSubCol+1) > clb[0]:
+							lastSubCol = clb[0]-1
+
+					# Clip if last row
+					if row==lastSubRow:
+						if (lastSubRow+1) > clb[1]:
+							lastSubRow = clb[1]-1
 
 					fbHeight = 0
 					originY = 0
@@ -3594,7 +3646,10 @@ class TiledDisplay(ResourceGroupHandler):
 								if bezel=='top':
 									fbHeight += usedMode['bezel']['top']
 									originY += usedMode['bezel']['top']
-								if bezel=='bottom':
+									if desktopBezel:
+										fbHeight += usedMode['bezel']['bottom']
+										originY += usedMode['bezel']['bottom']
+								if (bezel=='bottom') and (not desktopBezel):
 									fbHeight += usedMode['bezel']['bottom']
 
 							oY.append(originY)
@@ -3615,7 +3670,10 @@ class TiledDisplay(ResourceGroupHandler):
 									#print 'Including Left Bezel'
 									fbWidth += usedMode['bezel']['left']
 									originX += usedMode['bezel']['left']
-								if bezel=='right':
+									if desktopBezel:
+										fbWidth += usedMode['bezel']['right']
+										originX += usedMode['bezel']['right']
+								if (bezel=='right') and (not desktopBezel):
 									#print 'Including Right Bezel'
 									fbWidth += usedMode['bezel']['right']
 							oX.append(originX)
@@ -3637,7 +3695,10 @@ class TiledDisplay(ResourceGroupHandler):
 								if bezel=='left':
 									fbWidth += usedMode['bezel']['left']
 									originX += usedMode['bezel']['left']
-								if bezel=='right':
+									if desktopBezel:
+										fbWidth += usedMode['bezel']['right']
+										originX += usedMode['bezel']['right']
+								if (bezel=='right') and (not desktopBezel):
 									fbWidth += usedMode['bezel']['right']
 
 							oX.append(originX)
@@ -3655,11 +3716,13 @@ class TiledDisplay(ResourceGroupHandler):
 								if bezel=='top':
 									fbHeight += usedMode['bezel']['top']
 									originY += usedMode['bezel']['top']
-								if bezel=='bottom':
+									if desktopBezel:
+										fbHeight += usedMode['bezel']['bottom']
+										originY += usedMode['bezel']['bottom']
+								if (bezel=='bottom') and (not desktopBezel):
 									fbHeight += usedMode['bezel']['bottom']
 							oY.append(originY)
 							fbHeight += tile_resolution[1]
-
 
 					#print 'oX = ',
 					#pprint(oX)
@@ -3694,29 +3757,38 @@ class TiledDisplay(ResourceGroupHandler):
 					bl['screen'].setGPUCombiner(sli)
 
 					fbHeight = 0
-					# Compute each framebuffer 
+					# Compute each framebuffer; clipping is handled by
+					# usage of lastSubRow and lastSubCol
 					si = -1
-					numScanouts = self.block_display_layout[0] * self.block_display_layout[1]
-					for qpRow in range(self.block_display_layout[1]):
+					numScanouts = (lastSubRow+1) * (lastSubCol+1)
+					for qpRow in range(lastSubRow+1):
 						originY = fbHeight
 						fbHeight += tile_resolution[1]
 						if ((row>0) or (qpRow>0)) or forceBezel: # first row
 							fbHeight += usedMode['bezel']['top']
 							originY += usedMode['bezel']['top']
-						if ((row<(self.num_blocks[1]-1)) or (qpRow<(self.block_display_layout[1]-1))) or forceBezel: # not last row
-							fbHeight += usedMode['bezel']['bottom']
+							if desktopBezel:
+								fbHeight += usedMode['bezel']['bottom']
+								originY += usedMode['bezel']['bottom']
+						if ((row<(self.num_blocks[1]-1)) or (qpRow<lastSubRow)) or forceBezel: # not last row
+							if not desktopBezel:
+								fbHeight += usedMode['bezel']['bottom']
 					
 						fbWidth = 0
-						for qpCol in range(self.block_display_layout[0]):
+						for qpCol in range(lastSubCol+1):
 							si += 1
 							originX = fbWidth
 							fbWidth += tile_resolution[0]
 							if ((col>0) or (qpCol>0)) or forceBezel: # first col
 								fbWidth += usedMode['bezel']['left']
 								originX += usedMode['bezel']['left']
-							if ((col<(self.num_blocks[0]-1)) or (qpCol<(self.block_display_layout[0]-1))) or forceBezel: # not last col ?
-								fbWidth += usedMode['bezel']['right']
-							# determine GPU index and Port Index	
+								if desktopBezel:
+									fbWidth += usedMode['bezel']['right']
+									originX += usedMode['bezel']['right']
+							if ((col<(self.num_blocks[0]-1)) or (qpCol<lastSubCol)) or forceBezel: # not last col ?
+								if not desktopBezel:
+									fbWidth += usedMode['bezel']['right']
+							# determine GPU index and Port Index
 							if (numScanouts == 2):
 								gi = si
 								pi = 0
@@ -3846,7 +3918,7 @@ class TiledDisplay(ResourceGroupHandler):
 					y2 = 1.0-bl['rect_area'][3]/float(maxRectY)
 					bl['gl_area'] = [x1,y2,x2,y1]
 
-		#pprint(self.layoutMatrix)
+		#pprint(self.effectiveLayoutMatrix)
 
 	def getActualLayoutMatrix(self):
 		"""
@@ -3982,8 +4054,16 @@ class Allocation:
 		# Make a list of _all_servers in this allocation !
 		allServers = self.getServers()
 
+		# Eliminate duplicates due to shared GPUs - the UpdateServerConfig
+		# message will not tolerate multiple instances of the same X server.
+		uniqServers = {}
+		for thisServer in allServers:
+			if not uniqServers.has_key(thisServer.hashKey()):
+				uniqServers[thisServer.hashKey()] = thisServer
+		uniqServers = uniqServers.values()
+
 		# We can do setup only on the 'normal' servers
-		serverList = filter(lambda x: x.getType()==NORMAL_SERVER, allServers)
+		serverList = filter(lambda x: x.getType()==NORMAL_SERVER, uniqServers)
 
 		# Update the configuration of these on the SSM
 		resourceAccess.updateServerConfig(self.getId(), serverList)
@@ -4094,33 +4174,33 @@ def readMessageFromSocket(sock):
 
 	return payload
 
-def getMasterParameters():
+def getMasterParameters(filepath = masterConfigFile):
 	try:
-		dom = minidom.parse(masterConfigFile)
+		dom = minidom.parse(filepath)
 	except xml.parsers.expat.ExpatError, e:
 		raise ValueError, str(e)
 	rootNode = dom.documentElement
 	systemNode = domutil.getChildNode(rootNode, 'system')
 	if systemNode is None:
-		raise VizError(VizError.BAD_CONFIGURATION, "Incorrect system_config.xml. Need to have a valid system specification.")
+		raise VizError(VizError.BAD_CONFIGURATION, "Incorrect Master Configuration (%s). Need to have a valid system specification."%(filepath))
 	typeNode = domutil.getChildNode(systemNode, 'type')
 	if typeNode is None:
-		raise VizError(VizError.BAD_CONFIGURATION, "Incorrect system_config.xml. Need to have a valid system specification.")
+		raise VizError(VizError.BAD_CONFIGURATION, "Incorrect Master Configuration File (%s). Need to have a valid system specification."%(filepath))
 	systemType = domutil.getValue(typeNode)
 	if systemType == "standalone":
-		raise VizError(VizError.BAD_CONFIGURATION, "Accessing resources is not possible on a standalone system")
+		raise VizError(VizError.BAD_CONFIGURATION, "Accessing resources is not possible on a standalone system; bad Master Configuration File(%s)"%(filepath))
 	masterNode = domutil.getChildNode(systemNode, "master")
 	if masterNode is None:
-		raise VizError(VizError.BAD_CONFIGURATION, "Master Node is not specified in system_config.xml")
+		raise VizError(VizError.BAD_CONFIGURATION, "Master Node is not specified in Master Configuration File(%s)"%(filepath))
 	master = domutil.getValue(masterNode)
 	if len(master)==0:
-		raise VizError(VizError.BAD_CONFIGURATION, "Master Node cannot be empty in system_config.xml")
+		raise VizError(VizError.BAD_CONFIGURATION, "Master Node cannot be empty in Master Configuration File(%s)"%(filepath))
 	portNode = domutil.getChildNode(systemNode, "master_port")
 	if portNode is None:
-		raise VizError(VizError.BAD_CONFIGURATION, "Master Port is not specified in system_config.xml")
+		raise VizError(VizError.BAD_CONFIGURATION, "Master Port is not specified in Master Configuration File(%s)"%(filepath))
 	masterPortStr = domutil.getValue(portNode)
 	if len(masterPortStr)==0:
-		raise VizError(VizError.BAD_CONFIGURATION, "Master Port cannot be empty in system_config.xml")
+		raise VizError(VizError.BAD_CONFIGURATION, "Master Port cannot be empty in Master Configuration File(%s)"%(filepath))
 	try:
 		if master != "localhost":
 			masterPort = int(masterPortStr)
@@ -4131,16 +4211,16 @@ def getMasterParameters():
 				raise ValueError, "Master Port (unix socket name) must begin with /tmp/"
 			masterPort = masterPortStr
 	except ValueError, e:
-		raise VizError(VizError.BAD_CONFIGURATION, "Bad port number value in system_config.xml. Reason: %s"%(str(e)))
+		raise VizError(VizError.BAD_CONFIGURATION, "Bad port number value in Master Configuration File(%s). Reason: %s"%(filepath, str(e)))
 
 	authNode = domutil.getChildNode(systemNode, "master_auth")
 	if authNode is None:
-		raise VizError(VizError.BAD_CONFIGURATION, "Authorization method for communication to Master is not specified in system_config.xml")
+		raise VizError(VizError.BAD_CONFIGURATION, "Authorization method for communication to Master is not specified in Master Configuration File(%s)"%(filepath))
 	masterAuth = domutil.getValue(authNode)
 	if len(masterAuth)==0:
-		raise VizError(VizError.BAD_CONFIGURATION, "Authorization method for communication to Master cannot be empty in system_config.xml")
+		raise VizError(VizError.BAD_CONFIGURATION, "Authorization method for communication to Master cannot be empty in Master Configuration File(%s)"%(filepath))
 	if masterAuth not in ['None','Munge']:
-		raise VizError(VizError.BAD_CONFIGURATION, "Improper Authorization method specified for communication to Master in system_config.xml")
+		raise VizError(VizError.BAD_CONFIGURATION, "Improper Authorization method specified for communication to Master in Master Configuration File(%s)"%(filepath))
 		
 	return [master, masterPort, masterAuth]
 

@@ -124,12 +124,19 @@ int main(int argc, char**argv)
 	}
 
 	// Ensure that the virtual X server is executable
-	if(access(argv[1], X_OK)!=0)
+	if(access(argv[2], X_OK)!=0)
 	{
-		fprintf(stderr, "ERROR : Specified X server is not executable. Cannot continue.\n");
+		fprintf(stderr, "ERROR : Specified X server(%s) is not executable. Cannot continue.\n", argv[2]);
 		exit(-1);
 	}
+	if(argv[1][0]!=':')
+	{
+		fprintf(stderr, "Bad DISPLAY value %s\n", argv[1]);
+		exit(1);
+	}
 
+	char xdisplay[256];
+	strcpy(xdisplay,argv[1]);
 
 	if(getenv("VS_X_DEBUG"))
 	{
@@ -153,25 +160,18 @@ int main(int argc, char**argv)
 	}
 
 	int notifyParent=0; // Notify parent process of X server readiness by SIGUSR1 ?
-	char xdisplay[256];
 
-	// Default value of DISPLAY. May be overridden on the command line
-	strcpy(xdisplay, ":0");
 
 	// Create argument list for X server
 	char **childArgs=new char*[argc+10]; // NOTE: why +n ? we need the extra space later to add the "-config", and "-sharevts" arguments.
 	// X server is the child process
 	char *cmd=NULL;
 
-	childArgs[0]=argv[1]; // the virtual X server is what we'll execute
-	int destIndex=1;
-	for (int i=2;i<argc;i++)
+	childArgs[0]=argv[2]; // arg2 => the virtual X server is what we'll execute
+	childArgs[1]=argv[1]; // arg1 => the DISPLAY value
+	int destIndex=2;
+	for (int i=3;i<argc;i++)
 	{
-		if(argv[i][0]==':')
-		{
-			// this is the display
-			strcpy(xdisplay,argv[i]);
-		}
 		childArgs[destIndex++]=argv[i];
 	}
 	childArgs[destIndex]=0; // NULL terminate list

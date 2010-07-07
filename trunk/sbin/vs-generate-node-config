@@ -150,6 +150,24 @@ def parse_gpuInfo(inFile):
 			# later
 			gpuInfo[gpuIndex]['BusID']=None
 
+	# X server can't start on SLES11 unless the BusID is given
+	# so, we find the BusID from /proc
+	if (len(gpuInfo)==1) and (gpuInfo[0]['BusID'] is None):
+		# Run modprobe nvidia, so we can look at the proc filesystem next!
+		if runSystem("modprobe nvidia", False)!=0:
+			print >>sys.stderr, "ERROR: Failed to run 'modprobe nvidia'. Please ensure that the nvidia driver is installed properly."
+			sys.exit(1)
+		details = getOutput('cat /proc/driver/nvidia/cards/0 | grep "Bus Location"')
+		details = details[0]
+		# You'll get a line like
+		# Bus Location:    46.00.0
+		# We need to convert this to "PCI:70:00:0" (hex to integer)
+		busId = details.split(':')[1].lstrip().rstrip()
+		busIdParts = busId.split('.')
+		
+		busId = "PCI:%d:%02d:%01d"%(int(busIdParts[0], 16), int(busIdParts[1], 16), int(busIdParts[2], 16))
+		gpuInfo[0]['BusID'] = busId
+
 	return gpuInfo
 
 temp_xconfig = "/tmp/.vgnc-xorg.conf"
@@ -476,7 +494,7 @@ downgrade the nvidia driver and retry running this script.
 					serverStarted = True
 					break
 			if not serverStarted:
-				exitError("Failed to start X server")
+				exitError("Failed to start X server for GPU index %d (out of total %d GPUs in the system)"%(gpuIndex, len(gpuInfo)))
 			info = vsutil.parseXLogFile()
 
 		supportedScanouts = {}
@@ -517,7 +535,7 @@ downgrade the nvidia driver and retry running this script.
 
 					ret = runSystem("xinit /opt/vizstack/bin/vs-get-limits %s -- -logverbose 6 -config %s"%(temp_result_file, output_path))
 					if ret !=0:
-						exitError("Failed to start X server")
+						exitError("Failed to start X server for GPU index %d while probing for display capability %s-%d"%(gpuIndex, stMap[scanType], portIndex))
 					info2 = vsutil.parseXLogFile()
 					connDisplays = info2['connected_displays']
 					if len(connDisplays)==1:

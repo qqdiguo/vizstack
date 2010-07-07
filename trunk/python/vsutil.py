@@ -398,7 +398,7 @@ def __getFrameLockChain(resList):
 			baseGPUIndex += len(srvScreen.getGPUs())
 	return flChain
 
-def loadResourceGroups(sysConfig):
+def loadResourceGroups(sysConfig, rg_config_file=vsapi.rgConfigFile):
 	"""
 	Parse the resource group configuration file & return the resource groups.
 	If the resource group configuration file is missing, then we behave as if no
@@ -410,13 +410,13 @@ def loadResourceGroups(sysConfig):
 	# A non existent file will be treated as if there were
 	# no resource groups defined
 	try:
-		os.stat(vsapi.rgConfigFile)
+		os.stat(rg_config_file)
 	except:
 		return resgroups
 	try:
-		dom = minidom.parse(vsapi.rgConfigFile)
+		dom = minidom.parse(rg_config_file)
 	except xml.parsers.expat.ExpatError, e:
-		raise VizError(VizError.BAD_CONFIGURATION, "Failed to parse XML file '%s'. Reason: %s"%(vsapi.rgConfigFile, str(e)))
+		raise VizError(VizError.BAD_CONFIGURATION, "Failed to parse XML file '%s'. Reason: %s"%(rg_config_file, str(e)))
 
 	root_node = dom.getElementsByTagName("resourcegroupconfig")[0]
 	rgNodes = domutil.getChildNodes(root_node,"resourceGroup")
@@ -442,7 +442,9 @@ def loadResourceGroups(sysConfig):
 		resgroups[newResGrp] = obj
 	return resgroups
 
-def loadLocalConfig(onlyTemplates=False):
+def loadLocalConfig(
+	onlyTemplates=False, master_config_file=vsapi.masterConfigFile, node_config_file=vsapi.nodeConfigFile, rg_config_file=vsapi.rgConfigFile, 
+	systemTemplateDir = vsapi.systemTemplateDir, overrideTemplateDir = vsapi.overrideTemplateDir):
 	"""
 	Load the local system configuration. Can load templates only, if needed.
 	"""
@@ -459,8 +461,8 @@ def loadLocalConfig(onlyTemplates=False):
 	# that the local templates override the global ones.
 
 	# Load GPU templates
-	fileList = glob('/opt/vizstack/share/templates/gpus/*.xml')
-	fileList += glob('/etc/vizstack/templates/gpus/*.xml')
+	fileList = glob('%s/gpus/*.xml'%(systemTemplateDir))
+	fileList += glob('%s/gpus/*.xml'%(overrideTemplateDir))
 	for fname in fileList:
 		try:
 			dom = minidom.parse(fname)
@@ -471,8 +473,8 @@ def loadLocalConfig(onlyTemplates=False):
 		sysConfig['templates']['gpu'][newObj.getType()] = newObj
 
 	# DisplayDevice templates
-	fileList = glob('/opt/vizstack/share/templates/displays/*.xml')
-	fileList += glob('/etc/vizstack/templates/displays/*.xml')
+	fileList = glob('%s/displays/*.xml'%(systemTemplateDir))
+	fileList += glob('%s/displays/*.xml'%(overrideTemplateDir))
 	for fname in fileList:
 		try:
 			dom = minidom.parse(fname)
@@ -483,8 +485,8 @@ def loadLocalConfig(onlyTemplates=False):
 		sysConfig['templates']['display'][newObj.getType()] = newObj
 
 	# Keyboard templates
-	fileList = glob('/opt/vizstack/share/templates/keyboard/*.xml')
-	fileList += glob('/etc/vizstack/templates/keyboard/*.xml')
+	fileList = glob('%s/keyboard/*.xml'%(systemTemplateDir))
+	fileList += glob('%s/keyboard/*.xml'%(overrideTemplateDir))
 	for fname in fileList:
 		try:
 			dom = minidom.parse(fname)
@@ -494,8 +496,8 @@ def loadLocalConfig(onlyTemplates=False):
 		sysConfig['templates']['keyboard'][newObj.getType()] = newObj
 
 	# Mice templates
-	fileList = glob('/opt/vizstack/share/templates/mouse/*.xml')
-	fileList += glob('/etc/vizstack/templates/mouse/*.xml')
+	fileList = glob('%s/mouse/*.xml'%(systemTemplateDir))
+	fileList += glob('%s/mouse/*.xml'%(overrideTemplateDir))
 	for fname in fileList:
 		try:
 			dom = minidom.parse(fname)
@@ -525,9 +527,9 @@ def loadLocalConfig(onlyTemplates=False):
 
 	# Read in the node configuration file. This includes the scheduler information
 	try:
-		dom = minidom.parse(vsapi.nodeConfigFile)
+		dom = minidom.parse(node_config_file)
 	except xml.parsers.expat.ExpatError, e:
-		raise VizError(VizError.BAD_CONFIGURATION, "Failed to parse XML file '%s'. Reason: %s"%(vsapi.nodeConfigFile, str(e)))
+		raise VizError(VizError.BAD_CONFIGURATION, "Failed to parse XML file '%s'. Reason: %s"%(node_config_file, str(e)))
 
 	root_node = dom.getElementsByTagName("nodeconfig")[0]
 	nodes_node = domutil.getChildNode(root_node,"nodes")
@@ -700,7 +702,7 @@ def loadLocalConfig(onlyTemplates=False):
 	# important debugging check
 
 	# Load the resource groups
-	resgroups = loadResourceGroups(sysConfig)
+	resgroups = loadResourceGroups(sysConfig, rg_config_file)
 	sysConfig['resource_groups'] = resgroups
 
 	return sysConfig
