@@ -106,3 +106,21 @@ on Ubuntu 9.10:
  9. sudo apt-get install fop
 10. sudo apt-get install docbook
 
+Compiling dependencies from source:
+-----------------------------------
+
+Some platforms don't provide packages for dependencies used by VizStack. e.g., SLURM and Munge 
+packages are not available for SLES.  These may be needed for multi-node deployment. 
+So, you will need to build these manually.
+
+1. MUNGE on SLES: For 'configure' to succeed, you need to install
+     - libopenssl-devel
+     - zlib-devel (dependency of libopenssl-devel)
+   These packages are available on the SLES SDK DVD.
+
+   After extracting the munge source code, use the following steps :
+    # ./configure --prefix=/
+    # make
+    # make install
+
+2. SLURM on SLES: Run configure with prefix set to /usr.
