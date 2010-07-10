@@ -117,12 +117,12 @@ class SLURMLauncher(launcher.Launcher):
         # Deallocate this SLURM Job
         # Note that this will kill all the job steps associated with the job
         try:
-            p = subprocess.Popen(["scancel"]+["-q", str(self.schedId)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, close_fds=True)
+            p = subprocess.Popen(["scancel", str(self.schedId)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, close_fds=True)
         except OSError, e:
             raise SLURMError(e.__str__)
 
-        if(p.returncode == 1):
-            raise SLURMError(p.communicate()[1])
+        # Let the command finish. We ignore any reported errors and expect SLURM to do the proper cleanup.
+        p.communicate()
 
         if self.scheduler is not None:
             self.scheduler.deallocate(self)
