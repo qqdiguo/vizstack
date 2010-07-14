@@ -26,6 +26,7 @@ import sys
 import time
 import slurmlauncher
 import re
+import vsutil
 
 class SLURMError(Exception):
     def __init__(self, msg):
@@ -172,7 +173,7 @@ class SLURMScheduler(scheduler.Scheduler):
         allNodes = []
         for x in jobList:
             if len(x)>0:
-                allNodes = allNodes + self.expandHosts(x.split(" ")[1])
+                allNodes = allNodes + vsutil.expandNodes(x.split(" ")[1])
         allNodes = self.__flatten(allNodes)
         return allNodes
 
@@ -194,7 +195,7 @@ class SLURMScheduler(scheduler.Scheduler):
         unusableNodes = []
         for x in jobList:
             if x.split(" ")[0] in ["drained", "down","down*","dranined*"]: # FIXME: Manju what is this "*" business ??
-                unusableNodes.append(self.expandHosts(x.split(" ")[1]))
+                unusableNodes.append(vsutil.expandNodes(x.split(" ")[1]))
         unusableNodes = self.__flatten(unusableNodes)
         return unusableNodes
 

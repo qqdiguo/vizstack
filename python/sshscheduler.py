@@ -24,16 +24,16 @@
 # operation.
 # 
 # 
-from scheduler import Scheduler
-from launcher import Launcher
-from localscheduler import VizProcess
+import scheduler
+import launcher
+import localscheduler
 import os
 import subprocess
 import process
 import socket
 import copy
 
-class SSHReservation(Launcher):
+class SSHReservation(launcher.Launcher):
 
 	rootNodeName = "SSHReservation"
 
@@ -79,7 +79,7 @@ class SSHReservation(Launcher):
 		# NOTE: close_fds = True as we don't want the child to inherit our FDs and then 
 		# choke other things ! e.g. the SSM will not clean up a connection if close_fds is not set to True
 		proc = subprocess.Popen(cmd_list, stdout=outFile, stderr=errFile, stdin=inFile, close_fds=True, env=launcherEnv)
-		return VizProcess(proc)
+		return localscheduler.VizProcess(proc)
 
 	def serializeToXML(self):
 		return "<%s />"%(SSHReservation.rootNodeName)
@@ -88,7 +88,7 @@ class SSHReservation(Launcher):
 		if domNode.nodeName != SSHReservation.rootNodeName:
 			raise ValueError, "Failed to deserialize SSHReservation. Programmatic Error"
 
-class SSHScheduler(Scheduler):
+class SSHScheduler(scheduler.Scheduler):
 
 	def __init__(self, nodeList, params):
 		self.allocations = []

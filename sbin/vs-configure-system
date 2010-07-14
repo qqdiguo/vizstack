@@ -69,41 +69,6 @@ outMasterFileName = '/etc/vizstack/master_config.xml'
 outNodeFileName   = '/etc/vizstack/node_config.xml'
 outRGFileName     = '/etc/vizstack/resource_group_config.xml'
 
-def expandNodes(spec):
-	ob = re.match('^(.*)\[([0-9,+\-]+)\]$', spec)
-	if ob is None:
-		return [spec]
-
-	nodePrefix = ob.groups()[0]
-	if len(nodePrefix)==0:
-		raise ValueError, "Bad node specification %s"%(spec)
-
-	expansionSpec = ob.groups()[1]
-	ranges = expansionSpec.split(",")
-	nodeSuffix = []
-	for thisRange in ranges:
-		if len(thisRange)==0: # Empty string, error
-			raise ValueError, "Bad node specification %s"%(spec)
-		rangeParts = thisRange.split("-")
-		if len(rangeParts)==1: # only number
-			try:
-				nodeSuffix.append(int(rangeParts[0]))
-			except:
-				raise ValueError, "Bad node specification %s"%(spec)
-		elif len(rangeParts)==2:
-			try:
-				fromIndex = int(rangeParts[0])
-				toIndex = int(rangeParts[1])
-				if toIndex<fromIndex:
-					raise ValueError, "Bad node specification %s"%(spec)
-			except:
-				raise ValueError, "Bad node specification %s"%(spec)
-
-			for idx in range(fromIndex,toIndex+1):
-				nodeSuffix.append(idx)
-
-	return map(lambda x: nodePrefix+str(x) , nodeSuffix)
-
 #
 # Script execution starts here...
 #
@@ -199,7 +164,7 @@ if errorsHappened:
 nodeList = []
 for nodeSpec in args:
 	try:
-		nodeList = nodeList + expandNodes(nodeSpec)
+		nodeList = nodeList + vsutil.expandNodes(nodeSpec)
 	except ValueError, e:
 		print >>sys.stderr, str(e)
 		sys.exit(-1)

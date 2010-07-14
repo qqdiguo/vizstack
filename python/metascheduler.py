@@ -16,11 +16,10 @@
 # along with this program; if not, write to the Free Software
 # Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
-from slurmscheduler import SLURMScheduler
-from localscheduler import LocalScheduler
-from sshscheduler import SSHScheduler
+import slurmscheduler
+import localscheduler
+import sshscheduler
 import vsapi
-from vsapi import VizError
 import time
 import sys
 import weakref
@@ -36,11 +35,11 @@ def uniqList(list):
 
 def createSchedulerType(schedType, nodeList, params):
 	if schedType=="slurm":
-		return SLURMScheduler(nodeList, params)
+		return slurmscheduler.SLURMScheduler(nodeList, params)
 	elif schedType=="local":
-		return LocalScheduler(nodeList, params)
+		return localscheduler.LocalScheduler(nodeList, params)
 	elif schedType=="ssh":
-		return SSHScheduler(nodeList, params)
+		return sshscheduler.SSHScheduler(nodeList, params)
 
 	raise ValueError, "Unknown scheduler type '%s'"%(schedType)
 
@@ -476,7 +475,7 @@ class Metascheduler:
 
 			# if we don't have a match, then we're done
 			if didSatisfy == False:
-				raise VizError(VizError.USER_ERROR, "Not enough resources to satisfy the request")
+				raise vsapi.VizError(vsapi.VizError.USER_ERROR, "Not enough resources to satisfy the request")
 		
 			# put the allocated resources in their final place
 			allocatedResources[reqDesc['reqIndex']] = resFinalSelected
@@ -506,11 +505,11 @@ class Metascheduler:
 			# the names on all resources will be the same, so pick the first one
 			# also, note that the length of resToBeAllocated must be atleast one - else we goofed up elsewhere above!
 			if len(resToBeAllocated)==0:
-				raise VizError(VizError.INTERNAL_ERROR, "No resources TBA at DOF=2, but still resource requirement got classified as DOF=2 !")
+				raise vsapi.VizError(vsapi.VizError.INTERNAL_ERROR, "No resources TBA at DOF=2, but still resource requirement got classified as DOF=2 !")
 			nodeName = resToBeAllocated[0].getHostName() 
 			# Check whether this nodename is valid ? FIXME: should I do this test earlier ??
 			if not availResourcesByNodeName.has_key(nodeName):
-				raise VizError(VizError.USER_ERROR, "Can't allocate resources. Node name '%s' is not available for allocation"%(nodeName))
+				raise vsapi.VizError(vsapi.VizError.USER_ERROR, "Can't allocate resources. Node name '%s' is not available for allocation"%(nodeName))
 			nodeFreeRes = availResourcesByNodeName[nodeName]
 
 			# Sort free list by weight; this ensures that matching items with lower weight will 
@@ -520,7 +519,7 @@ class Metascheduler:
 			allocThese, remainingAvail = self.__resourceMatchDOF2(resToBeAllocated, nodeFreeRes, userInfo['uid'])
 			if allocThese is None:
 				# This shouldn't happen at all. If it does, it's a bug in our algorithm
-				raise VizError(VizError.INTERNAL_ERROR, "Couldn't allocate a DOF=2 requirement. Please check your resource list")
+				raise vsapi.VizError(vsapi.VizError.INTERNAL_ERROR, "Couldn't allocate a DOF=2 requirement. Please check your resource list")
 
 			# Got the resources...
 
@@ -631,7 +630,7 @@ class Metascheduler:
 					
 			if didSatisfy == False:
 				# we can't satisfy the user request
-				raise VizError(VizError.USER_ERROR, "Not able to satisfy the request with the available resources (DOF=3)")
+				raise vsapi.VizError(vsapi.VizError.USER_ERROR, "Not able to satisfy the request with the available resources (DOF=3)")
 
 			# put the allocated resources in their final place
 			allocatedResources[reqDesc['reqIndex']] = resFinalSelected
@@ -862,7 +861,7 @@ class Metascheduler:
 						return [None, None]
 						
 			if match is None:
-				raise VizError(VizError.INTERNAL_ERROR, "You aren't handling this class of resources.")
+				raise vsapi.VizError(vsapi.VizError.INTERNAL_ERROR, "You aren't handling this class of resources.")
 
 			matchedRes.append(match)
 
