@@ -54,9 +54,10 @@ rm -rf $RPM_BUILD_ROOT
 /opt/vizstack/man/man1/
 
 %changelog
-* Wed Jun 7 2011 Shree Kumar <shreekumar@hp.com>
+* Wed Jul 14 2011 Shree Kumar <shreekumar@hp.com>
 - Updated version number to 1.1-3
    - Few bug fixes
+     - Fixed to work with SLURM 2.10 & above (Ubuntu 10.04, web download)
      - vs-manage-tiled-displays
      - Single GPU discovert issue on SLES
      - Fixed bad merge : included clip_last_block
@@ -65,7 +66,9 @@ rm -rf $RPM_BUILD_ROOT
        weren't starting up right. Fixed this via a delay.
      - Updating state of multiple shared servers needed
        a uniq operation. Added that.
+     - Fixed node name expansion when node names have leading zeroes.
    - Paraview script now supports shared GPUs for rendering.
+     This is also the default. For dedicated GPUs, use -x.
    - Minor vsapi changes
      - include a hyphen(-) in the options for servers
        this allows usage of both - and +
