@@ -16,7 +16,6 @@
 # along with this program; if not, write to the Free Software
 # Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
-from vsapi import extractObjects, Server, VizError
 from pprint import pprint
 import vsapi
 import os
@@ -64,7 +63,7 @@ def disableFrameLock(resList):
 		if gpuDetails['FrameLockDeviceConnected']!=True:
 			nonFrameLockGPUs += 1
 	if nonFrameLockGPUs>0:
-		raise VizError(VizError.BAD_CONFIGURATION, "%d GPUs out of %d GPUs are not connected to the frame lock device. Frame lock requires all GPUs to be connected to G-Sync cards. Perhaps you passed a wrong list?"%(len(flChain)-enableCount, len(flChain)))
+		raise vsapi.VizError(vsapi.VizError.BAD_CONFIGURATION, "%d GPUs out of %d GPUs are not connected to the frame lock device. Frame lock requires all GPUs to be connected to G-Sync cards. Perhaps you passed a wrong list?"%(len(flChain)-enableCount, len(flChain)))
 	
 	# 1. Ensure that framelock is already active on all GPUs
 	enableCount = 0
@@ -73,7 +72,7 @@ def disableFrameLock(resList):
 		if gpuDetails['FrameLockEnable']==True:
 			enableCount += 1
 	if enableCount!=len(flChain):
-		raise VizError(VizError.BAD_CONFIGURATION, "Frame lock is not enabled in %d GPUs out of %d GPUs. Probably you have passed a wrong list?"%(len(flChain)-enableCount, len(flChain)))
+		raise vsapi.VizError(vsapi.VizError.BAD_CONFIGURATION, "Frame lock is not enabled in %d GPUs out of %d GPUs. Probably you have passed a wrong list?"%(len(flChain)-enableCount, len(flChain)))
 
 	# 2. Ensure that all displays are running at the same refresh rate!
 	masterRefreshRate = None
@@ -92,7 +91,7 @@ def disableFrameLock(resList):
 				if thisRR not in badRRList:
 					badRRList.append(thisRR)
 	if numBadPorts>0:
-		raise VizError(VizError.BAD_CONFIGURATION, "Frame lock master refresh rate is %s Hz. %d output ports have a different refresh rate %s Hz. Perhaps you have included two or more framelock chains in the input?"%(masterRefreshRate, numBadPorts, badRRList))
+		raise vsapi.VizError(vsapi.VizError.BAD_CONFIGURATION, "Frame lock master refresh rate is %s Hz. %d output ports have a different refresh rate %s Hz. Perhaps you have included two or more framelock chains in the input?"%(masterRefreshRate, numBadPorts, badRRList))
 
 	# 3. Disable frame lock on all GPUs
 	for member in flChain:
@@ -127,7 +126,7 @@ def disableFrameLock(resList):
 				badFLSR.append(thisFLSR)
 
 	if (masterFLSR!='0') or (numBadGPUs>0):	
-		raise VizError(VizError.BAD_CONFIGURATION, "Unable to disable lock due to unknown reasons.")
+		raise vsapi.VizError(vsapi.VizError.BAD_CONFIGURATION, "Unable to disable lock due to unknown reasons.")
 	#pprint(flChain)
 	return "Disabled Frame Lock @ %s Hz on %d GPUs connected to %d display devices."%(masterRefreshRate, len(flChain), totalPorts)
 
@@ -148,7 +147,7 @@ def enableFrameLock(resList):
 		if gpuDetails['FrameLockDeviceConnected']!=True:
 			nonFrameLockGPUs += 1
 	if nonFrameLockGPUs>0:
-		raise VizError(VizError.BAD_CONFIGURATION, "%d GPUs out of %d GPUs are not connected to the frame lock device. Frame lock requires all GPUs to be connected to G-Sync cards."%(len(flChain)-enableCount, len(flChain)))
+		raise vsapi.VizError(vsapi.VizError.BAD_CONFIGURATION, "%d GPUs out of %d GPUs are not connected to the frame lock device. Frame lock requires all GPUs to be connected to G-Sync cards."%(len(flChain)-enableCount, len(flChain)))
 
 	# 1. Ensure that framelock is not already active
 	enableCount = 0
@@ -157,7 +156,7 @@ def enableFrameLock(resList):
 		if gpuDetails['FrameLockEnable']==True:
 			enableCount += 1
 	if enableCount>0:
-		raise VizError(VizError.BAD_CONFIGURATION, "Frame lock is enabled in %d GPUs out of %d GPUs. You need to disable framelock on these before trying to enable framelock."%(enableCount, len(flChain)))
+		raise vsapi.VizError(vsapi.VizError.BAD_CONFIGURATION, "Frame lock is enabled in %d GPUs out of %d GPUs. You need to disable framelock on these before trying to enable framelock."%(enableCount, len(flChain)))
 
 	# 2. Ensure that all displays are running at the same refresh rate!
 	masterRefreshRate = None
@@ -176,7 +175,7 @@ def enableFrameLock(resList):
 				if thisRR not in badRRList:
 					badRRList.append(thisRR)
 	if numBadPorts>0:
-		raise VizError(VizError.BAD_CONFIGURATION, "Frame lock master refresh rate is %s Hz. %d output ports have a different refresh rate %s Hz. Framelock requires all display outputs to run at the same refresh rate."%(masterRefreshRate, numBadPorts, badRRList))
+		raise vsapi.VizError(vsapi.VizError.BAD_CONFIGURATION, "Frame lock master refresh rate is %s Hz. %d output ports have a different refresh rate %s Hz. Framelock requires all display outputs to run at the same refresh rate."%(masterRefreshRate, numBadPorts, badRRList))
 
 
 	# 3. We need to ensure that the first GPU is "master-able"???
@@ -199,7 +198,7 @@ def enableFrameLock(resList):
 			stereoModesInUse.append(scrStereoMode)
 
 	if len(stereoModesInUse)>1:
-		raise VizError(VizError.BAD_CONFIGURATION, "All X servers need to be running with the same stereo setting if you want to enable framelock on them.")
+		raise vsapi.VizError(vsapi.VizError.BAD_CONFIGURATION, "All X servers need to be running with the same stereo setting if you want to enable framelock on them.")
 	
 	
 	# All sanity checks done. So time to enable frame lock...
@@ -276,10 +275,10 @@ def enableFrameLock(resList):
 				badFLSRList.append(thisFLSR)
 	
 	if (numBadGPUs>0):
-		raise VizError(VizError.BAD_CONFIGURATION, "Unable to setup frame lock on %d GPUs. Please ensure that all the GPUs in the passed list are chained properly via cabling."%(numBadGPUs))
+		raise vsapi.VizError(vsapi.VizError.BAD_CONFIGURATION, "Unable to setup frame lock on %d GPUs. Please ensure that all the GPUs in the passed list are chained properly via cabling."%(numBadGPUs))
 	elif masterFLSR=='0':
 		pprint(flChain)
-		raise VizError(VizError.BAD_CONFIGURATION, "Unable to setup frame lock due to unknown reasons.")
+		raise vsapi.VizError(vsapi.VizError.BAD_CONFIGURATION, "Unable to setup frame lock due to unknown reasons.")
 
 	#pprint(flChain)
 	return (masterRefreshRate, "Enabled Frame Lock @ %s Hz on %d GPUs connected to %d display devices"%(masterRefreshRate, len(flChain), totalPorts))
@@ -383,7 +382,7 @@ def __getGPUDetails(srv, scr, gpuIndex):
 	return gpuInfo
 
 def __getFrameLockChain(resList):
-	allServers = extractObjects(Server, resList)
+	allServers = vsapi.extractObjects(vsapi.Server, resList)
 	flChain = []
 
 	# Create a frame lock chain consisting of all GPUs
@@ -398,12 +397,14 @@ def __getFrameLockChain(resList):
 			baseGPUIndex += len(srvScreen.getGPUs())
 	return flChain
 
-def loadResourceGroups(sysConfig, rg_config_file=vsapi.rgConfigFile):
+def loadResourceGroups(sysConfig, rg_config_file=None):
 	"""
 	Parse the resource group configuration file & return the resource groups.
 	If the resource group configuration file is missing, then we behave as if no
 	resource groups have been defined.
 	"""
+	if rg_config_file is None:
+		rg_config_file = vsapi.rgConfigFile
 
 	resgroups = {}
 	# Check if the resource group config file exists
@@ -416,7 +417,7 @@ def loadResourceGroups(sysConfig, rg_config_file=vsapi.rgConfigFile):
 	try:
 		dom = minidom.parse(rg_config_file)
 	except xml.parsers.expat.ExpatError, e:
-		raise VizError(VizError.BAD_CONFIGURATION, "Failed to parse XML file '%s'. Reason: %s"%(rg_config_file, str(e)))
+		raise vsapi.VizError(vsapi.VizError.BAD_CONFIGURATION, "Failed to parse XML file '%s'. Reason: %s"%(rg_config_file, str(e)))
 
 	root_node = dom.getElementsByTagName("resourcegroupconfig")[0]
 	rgNodes = domutil.getChildNodes(root_node,"resourceGroup")
@@ -425,7 +426,7 @@ def loadResourceGroups(sysConfig, rg_config_file=vsapi.rgConfigFile):
 		try:
 			obj.deserializeFromXML(node)
 		except ValueError, e:
-			raise VizError(VizError.BAD_CONFIGURATION, "FATAL: Error loading Resource Group '%s'. Reason: %s"%(obj.getName(), str(e)))
+			raise vsapi.VizError(vsapi.VizError.BAD_CONFIGURATION, "FATAL: Error loading Resource Group '%s'. Reason: %s"%(obj.getName(), str(e)))
 
 		# Normalize to paste hostnames where needed. This will make it easier to script tools!
 		obj = normalizeRG(obj)
@@ -433,22 +434,31 @@ def loadResourceGroups(sysConfig, rg_config_file=vsapi.rgConfigFile):
 		try:
 			obj.doValidate(sysConfig['templates']['display'].values())
 		except ValueError, e:
-			raise VizError(VizError.BAD_CONFIGURATION, "FATAL: Error validating Resource Group '%s'. Reason: %s"%(obj.getName(),str(e)))
+			raise vsapi.VizError(vsapi.VizError.BAD_CONFIGURATION, "FATAL: Error validating Resource Group '%s'. Reason: %s"%(obj.getName(),str(e)))
 
 		newResGrp = obj.getName()
 		if resgroups.has_key(newResGrp):
-			raise VizError(VizError.BAD_CONFIGURATION, "FATAL: Resource group '%s' defined more than once."%(newResGrp))
+			raise vsapi.VizError(vsapi.VizError.BAD_CONFIGURATION, "FATAL: Resource group '%s' defined more than once."%(newResGrp))
 
 		resgroups[newResGrp] = obj
 	return resgroups
 
 def loadLocalConfig(
-	onlyTemplates=False, master_config_file=vsapi.masterConfigFile, node_config_file=vsapi.nodeConfigFile, rg_config_file=vsapi.rgConfigFile, 
-	systemTemplateDir = vsapi.systemTemplateDir, overrideTemplateDir = vsapi.overrideTemplateDir):
+	onlyTemplates=False, master_config_file=None, node_config_file=None, rg_config_file=None, 
+	systemTemplateDir = None, overrideTemplateDir = None):
 	"""
 	Load the local system configuration. Can load templates only, if needed.
 	"""
-
+	if master_config_file is None:
+		master_config_file = vsapi.masterConfigFile
+	if node_config_file is None:
+		node_config_file = vsapi.nodeConfigFile
+	if rg_config_file is None:
+		rg_config_file = vsapi.rgConfigFile
+	if systemTemplateDir is None:
+		systemTemplateDir = vsapi.systemTemplateDir
+	if overrideTemplateDir is None:
+		overrideTemplateDir = vsapi.overrideTemplateDir
 	sysConfig = {
 		'templates' : { 'gpu' : {} , 'display' : {}, 'keyboard' : {}, 'mouse' : {}  }, 
 		'nodes' : {},
@@ -467,7 +477,7 @@ def loadLocalConfig(
 		try:
 			dom = minidom.parse(fname)
 		except xml.parsers.expat.ExpatError, e:
-			raise VizError(VizError.BAD_CONFIGURATION, "Failed to parse XML file '%s'. Reason: %s"%(fname, str(e)))
+			raise vsapi.VizError(vsapi.VizError.BAD_CONFIGURATION, "Failed to parse XML file '%s'. Reason: %s"%(fname, str(e)))
 
 		newObj = vsapi.deserializeVizResource(dom.documentElement, [vsapi.GPU])	
 		sysConfig['templates']['gpu'][newObj.getType()] = newObj
@@ -479,7 +489,7 @@ def loadLocalConfig(
 		try:
 			dom = minidom.parse(fname)
 		except xml.parsers.expat.ExpatError, e:
-			raise VizError(VizError.BAD_CONFIGURATION, "Failed to parse XML file '%s'. Reason: %s"%(fname, str(e)))
+			raise vsapi.VizError(vsapi.VizError.BAD_CONFIGURATION, "Failed to parse XML file '%s'. Reason: %s"%(fname, str(e)))
 
 		newObj = vsapi.deserializeVizResource(dom.documentElement, [vsapi.DisplayDevice])	
 		sysConfig['templates']['display'][newObj.getType()] = newObj
@@ -491,7 +501,7 @@ def loadLocalConfig(
 		try:
 			dom = minidom.parse(fname)
 		except xml.parsers.expat.ExpatError, e:
-			raise VizError(VizError.BAD_CONFIGURATION, "Failed to parse XML file '%s'. Reason: %s"%(fname, str(e)))
+			raise vsapi.VizError(vsapi.VizError.BAD_CONFIGURATION, "Failed to parse XML file '%s'. Reason: %s"%(fname, str(e)))
 		newObj = vsapi.deserializeVizResource(dom.documentElement, [vsapi.Keyboard])
 		sysConfig['templates']['keyboard'][newObj.getType()] = newObj
 
@@ -502,7 +512,7 @@ def loadLocalConfig(
 		try:
 			dom = minidom.parse(fname)
 		except xml.parsers.expat.ExpatError, e:
-			raise VizError(VizError.BAD_CONFIGURATION, "Failed to parse XML file '%s'. Reason: %s"%(fname, str(e)))
+			raise vsapi.VizError(vsapi.VizError.BAD_CONFIGURATION, "Failed to parse XML file '%s'. Reason: %s"%(fname, str(e)))
 
 		newObj = vsapi.deserializeVizResource(dom.documentElement, [vsapi.Mouse])	
 		sysConfig['templates']['mouse'][newObj.getType()] = newObj
@@ -515,7 +525,7 @@ def loadLocalConfig(
 	try:
 		dom = minidom.parse(vsapi.masterConfigFile)
 	except xml.parsers.expat.ExpatError, e:
-		raise VizError(VizError.BAD_CONFIGURATION, "Failed to parse XML file '%s'. Reason: %s"%(vsapi.masterConfigFile, str(e)))
+		raise vsapi.VizError(vsapi.VizError.BAD_CONFIGURATION, "Failed to parse XML file '%s'. Reason: %s"%(vsapi.masterConfigFile, str(e)))
 
 	root_node = dom.getElementsByTagName("masterconfig")[0]
 	system_node = domutil.getChildNode(root_node, "system")
@@ -523,13 +533,13 @@ def loadLocalConfig(
 	system_type = domutil.getValue(type_node)
 
 	if system_type=='standalone':
-		raise VizError(VizError.BAD_CONFIGURATION, "FATAL : Standalone configurations are not managed by the SSM")
+		raise vsapi.VizError(vsapi.VizError.BAD_CONFIGURATION, "FATAL : Standalone configurations are not managed by the SSM")
 
 	# Read in the node configuration file. This includes the scheduler information
 	try:
 		dom = minidom.parse(node_config_file)
 	except xml.parsers.expat.ExpatError, e:
-		raise VizError(VizError.BAD_CONFIGURATION, "Failed to parse XML file '%s'. Reason: %s"%(node_config_file, str(e)))
+		raise vsapi.VizError(vsapi.VizError.BAD_CONFIGURATION, "Failed to parse XML file '%s'. Reason: %s"%(node_config_file, str(e)))
 
 	root_node = dom.getElementsByTagName("nodeconfig")[0]
 	nodes_node = domutil.getChildNode(root_node,"nodes")
@@ -555,12 +565,12 @@ def loadLocalConfig(
 		for gpu in domutil.getChildNodes(node, "gpu"):
 			inGPU  = vsapi.deserializeVizResource(gpu, [vsapi.GPU])
 			if inGPU.getUseScanOut() is None:
-				raise VizError(VizError.BAD_CONFIGURATION, "ERROR: useScanOut needs to be defined for every GPU")
+				raise vsapi.VizError(vsapi.VizError.BAD_CONFIGURATION, "ERROR: useScanOut needs to be defined for every GPU")
 
 			try:
 				newGPU = copy.deepcopy(sysConfig['templates']['gpu'][inGPU.getType()])
 			except KeyError, e:
-				raise VizError(VizError.BAD_CONFIGURATION, "ERROR: No such GPU type '%s'"%(inGPU.getType()))
+				raise vsapi.VizError(vsapi.VizError.BAD_CONFIGURATION, "ERROR: No such GPU type '%s'"%(inGPU.getType()))
 
 			# FIXME: implement a GPU.copyTemplate function that will copy the template info
 			newGPU.setIndex(inGPU.getIndex())
@@ -587,7 +597,7 @@ def loadLocalConfig(
 		for sli in domutil.getChildNodes(node, "sli"):
 			newSLI = vsapi.deserializeVizResource(sli, [vsapi.SLI])
 			if (newSLI.getIndex() is None) or (newSLI.getType() is None) or (newSLI.getGPUIndex(0) is None) or (newSLI.getGPUIndex(1) is None):
-				raise VizError(VizError.BAD_CONFIGURATION, "Incompletely specified SLI bridge for host %s"%(nodeName))
+				raise vsapi.VizError(vsapi.VizError.BAD_CONFIGURATION, "Incompletely specified SLI bridge for host %s"%(nodeName))
 
 			newSLI.setHostName(nodeName)
 			resList.append(newSLI)
@@ -625,17 +635,17 @@ def loadLocalConfig(
 			else:
 				serverType = vsapi.NORMAL_SERVER
 			if serverType not in vsapi.VALID_SERVER_TYPES:
-				raise VizError(VizError.BAD_CONFIGURATION, "ERROR: Bad server type %s"%(serverType))
+				raise vsapi.VizError(vsapi.VizError.BAD_CONFIGURATION, "ERROR: Bad server type %s"%(serverType))
 
 			rangeNode = domutil.getChildNode(xs, "range")
 			fromX = int(domutil.getValue(domutil.getChildNode(rangeNode, "from")))
 			toX = int(domutil.getValue(domutil.getChildNode(rangeNode, "to")))
 			if toX<fromX:
-				raise VizError(VizError.BAD_CONFIGURATION, "FATAL: Bad input. Xserver range cannot have a 'to' less than 'from'")
+				raise vsapi.VizError(vsapi.VizError.BAD_CONFIGURATION, "FATAL: Bad input. Xserver range cannot have a 'to' less than 'from'")
 
 			for xv in range(fromX, toX+1):
 				if X_servers.has_key(xv):
-					raise VizError(VizError.BAD_CONFIGURATION, "ERROR: Bad input. Xserver %d used more than once"%(xv))
+					raise vsapi.VizError(vsapi.VizError.BAD_CONFIGURATION, "ERROR: Bad input. Xserver %d used more than once"%(xv))
 
 				X_servers[xv]=None
 				svr = vsapi.Server(xv, nodeName, serverType)
@@ -644,7 +654,7 @@ def loadLocalConfig(
 				if xv not in map(lambda x:x.getSharedServerIndex(), sharedGPUs):
 					all_servers.append(svr)
 		if len(all_servers)==0:
-			raise VizError(VizError.BAD_CONFIGURATION, "WARNING: Node %s has no X Servers."%(nodeName))
+			raise vsapi.VizError(vsapi.VizError.BAD_CONFIGURATION, "WARNING: Node %s has no X Servers."%(nodeName))
 		resList += all_servers
 
 		newNode.setResources(resList)
@@ -653,13 +663,13 @@ def loadLocalConfig(
 	# Process scheduler
 	schedNodes = domutil.getChildNodes(root_node,"scheduler")
 	if len(schedNodes)==0:
-		raise VizError(VizError.BAD_CONFIGURATION, "FATAL: You need to specify at-least a scheduler")
+		raise vsapi.VizError(vsapi.VizError.BAD_CONFIGURATION, "FATAL: You need to specify at-least a scheduler")
 
 	schedList = []
 	for sNode in schedNodes:
 		typeNode = domutil.getChildNode(sNode,"type")
 		if typeNode is None:
-			raise VizError(VizError.BAD_CONFIGRUATION, "FATAL: You need to specify a scheduler")
+			raise vsapi.VizError(vsapi.VizError.BAD_CONFIGRUATION, "FATAL: You need to specify a scheduler")
 
 		# Get the scheduler specific params
 		# Not specifying a parameter just results in passing an empty string
@@ -670,7 +680,7 @@ def loadLocalConfig(
 
 		nodeNodes = domutil.getChildNodes(sNode, "node")
 		if len(nodeNodes)==0:
-			raise VizError(VizError.BAD_CONFIGURATION, "FATAL: You need specify at-least one node per scheduler")
+			raise vsapi.VizError(vsapi.VizError.BAD_CONFIGURATION, "FATAL: You need specify at-least one node per scheduler")
 
 		nodeList = []
 		for nodeNode in nodeNodes:
@@ -680,7 +690,7 @@ def loadLocalConfig(
 			sched = metascheduler.createSchedulerType(domutil.getValue(typeNode), nodeList, param)
 			schedList.append(sched)
 		except ValueError, e:
-			raise VizError(VizError.BAD_CONFIGURATION, "Error creating a scheduler : %s"%(str(e)))
+			raise vsapi.VizError(vsapi.VizError.BAD_CONFIGURATION, "Error creating a scheduler : %s"%(str(e)))
 
 	# Ensure that one node is managed by only one scheduler
 	allNodeNames = []
@@ -693,7 +703,7 @@ def loadLocalConfig(
 		else:
 			allNames[nodeName] = 1
 	if len(allNames.keys())<len(allNodeNames):
-		raise VizError(VizError.BAD_CONFIGURATION, "ERROR: One or more nodes have been mentioned more than once in the scheduler configuration. VizStack does not allow a single node to be managed by more than one scheduler at a time.")
+		raise vsapi.VizError(vsapi.VizError.BAD_CONFIGURATION, "ERROR: One or more nodes have been mentioned more than once in the scheduler configuration. VizStack does not allow a single node to be managed by more than one scheduler at a time.")
 
 	sysConfig['schedulerList'] = schedList
 
@@ -939,6 +949,55 @@ def normalizeRG(rg):
 		outResList.append(resList)
 	outRG.setResources(allRes)
 	return outRG
+
+def expandNodes(spec):
+	"""
+	Expand a nodelist, SLURM style.
+	prefix[1-5,7,8] becomes prefix1 prefix2 prefix3 prefix4 prefix5 prefix7 prefix8
+	viz[00-05] becomes viz00 viz01 viz03 viz04 viz05
+	"""
+	ob = re.match('^(.*)\[([0-9,+\-]+)\]$', spec)
+	if ob is None:
+		return [spec]
+
+	nodePrefix = ob.groups()[0]
+	if len(nodePrefix)==0:
+		raise ValueError, "Bad node specification %s"%(spec)
+
+	expansionSpec = ob.groups()[1]
+	ranges = expansionSpec.split(",")
+	nodeSuffix = []
+	for thisRange in ranges:
+		if len(thisRange)==0: # Empty string, error
+			raise ValueError, "Bad node specification %s"%(spec)
+		rangeParts = thisRange.split("-")
+		if len(rangeParts)==1: # only number
+			try:
+				nodeSuffix.append(int(rangeParts[0]))
+			except:
+				raise ValueError, "Bad node specification %s"%(spec)
+		elif len(rangeParts)==2:
+			try:
+				fromIndex = int(rangeParts[0])
+				toIndex = int(rangeParts[1])
+				if toIndex<fromIndex:
+					raise ValueError, "Bad node specification %s"%(spec)
+			except:
+				raise ValueError, "Bad node specification %s"%(spec)
+
+			for idx in range(fromIndex,toIndex+1):
+				suffixStr = str(idx)
+				if len(rangeParts[0])==len(rangeParts[1]):
+					# In some cases, names of the nodes can have leading zeroes
+					# a simple integer interpolation omits the leading 0s in this
+					# case. We fix that by padding with starting zeroes !
+					# Note that this may still cause problems if the nodes are 
+					# numbered e.g. viz7 viz08 amd viz09. We'll live with that !
+					while len(suffixStr)<len(rangeParts[1]):
+						suffixStr = '0'+suffixStr
+				nodeSuffix.append(suffixStr)
+
+	return map(lambda x: nodePrefix+str(x) , nodeSuffix)
 
 if __name__ == "__main__":
 	ra = vsapi.ResourceAccess()

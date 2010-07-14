@@ -30,9 +30,9 @@ import xml
 from pprint import pprint
 import re
 import domutil
-from slurmlauncher import SLURMLauncher
-from localscheduler import LocalReservation
-from sshscheduler import SSHReservation
+import slurmlauncher
+import localscheduler
+import sshscheduler
 import string
 import copy
 import sys
@@ -188,7 +188,7 @@ class Schedulable:
 			if node.nodeName == "locality":
 				self.locality = domutil.getValue(node)
 			else:
-				for className in [LocalReservation, SLURMLauncher, SSHReservation]:
+				for className in [localscheduler.LocalReservation, slurmlauncher.SLURMLauncher, sshscheduler.SSHReservation]:
 					if node.nodeName == className.rootNodeName:
 						# FIXME: ensure that there is only one of these!
 						newObject = className()

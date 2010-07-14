@@ -30,8 +30,8 @@
 #   - this allows customers to use  scripts like Ensight, Amira on
 #     the local node.
 # 
-from scheduler import Scheduler
-from launcher import Launcher
+import scheduler
+import launcher
 import os
 import subprocess
 import process
@@ -78,7 +78,7 @@ class VizProcess(process.Process):
 			pass
 		self.wait()
 
-class LocalReservation(Launcher):
+class LocalReservation(launcher.Launcher):
 
 	rootNodeName = "LocalReservation"
 
@@ -137,7 +137,7 @@ class LocalReservation(Launcher):
 		if domNode.nodeName != LocalReservation.rootNodeName:
 			raise ValueError, "Failed to deserialize LocalReservation. Programmatic Error"
 
-class LocalScheduler(Scheduler):
+class LocalScheduler(scheduler.Scheduler):
 
 	def __init__(self, nodeList, params):
 		self.allocations = []
