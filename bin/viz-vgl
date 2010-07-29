@@ -332,7 +332,7 @@ if os.environ.has_key('DISPLAY'):
 if options.start_shell == True:
 	args = ["/bin/bash"]
 	if otherMachine:
-		args += ["-login"]
+		args += ["-i"]
 	print "Allocated GPU %d controlled by X Server '%s' on host '%s' for you."%(gpu.getIndex(), xServer.getDISPLAY(), xServer.getHostName())
 	if (vglNode != "localhost") and (vglNode != socket.gethostname()):
 		print "Starting secure shell to host '%s'..."%(xServer.getHostName())
