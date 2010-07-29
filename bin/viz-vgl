@@ -240,6 +240,14 @@ if not options.x11_draw:
 	except:
 		vglClientHost = None
 
+		# Try deriving VGL client location from the SSH environment
+		if os.environ.has_key('SSH_CLIENT'):
+			# SSH_CLIENT environment variable will be of the
+			# form "IP src_port dst_port"
+			# e.g. "16.181.65.30 1845 22"
+			sshClient = os.environ['SSH_CLIENT'].split(' ')[0]
+			vglClientHost = sshClient
+
 	if vglClientHost is not None:
 		try:
 			vglClientPort = int(os.environ['VGL_PORT'])
