@@ -95,7 +95,12 @@ class SLURMLauncher(launcher.Launcher):
         op_options = ""
 
 	cmd_args = copy.copy(args)
-	cmd_args = ["srun", "--jobid=%d"%(self.schedId), "-w", node, "-N1"]+cmd_args
+	# Ensure SLURM does not redirect stdin if not needed. Not doing so
+	# affects interactive processes started by user scripts.
+	redirArgs = []
+	if inFile is None:
+		redirArgs = ["--input", "none"]
+	cmd_args = ["srun", "--jobid=%d"%(self.schedId), "-w", node, "-N1"]+redirArgs+cmd_args
         try:
             # NOTE: set close_fds = True as we don't want the child to inherit our FDs and then 
             # choke other things ! e.g. the SSM will not clean up a connection if close_fds is not set to True
