@@ -303,7 +303,8 @@ if not options.x11_draw:
 
 if vglNode not in [ "localhost", socket.gethostname()]:
 	# Use SSH 
-	cmdArgs = ["ssh", "-X", xServer.getHostName()]
+	# -t gives a nicer shell on distros that use a color scheme - e.g. SLES
+	cmdArgs = ["ssh", "-t", "-X", xServer.getHostName()]
 	otherMachine = True
 
 	# If security is asked for, enable SSL with VGL
@@ -340,7 +341,7 @@ if os.environ.has_key('DISPLAY'):
 if options.start_shell == True:
 	args = ["/bin/bash"]
 	if otherMachine:
-		args += ["-i"]
+		args += ["-i"] # -i for interactive shell
 	print "Allocated GPU %d controlled by X Server '%s' on host '%s' for you."%(gpu.getIndex(), xServer.getDISPLAY(), xServer.getHostName())
 	if (vglNode != "localhost") and (vglNode != socket.gethostname()):
 		print "Starting secure shell to host '%s'..."%(xServer.getHostName())
