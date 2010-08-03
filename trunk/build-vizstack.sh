@@ -18,12 +18,49 @@
 # along with this program; if not, write to the Free Software
 # Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
-VV=`grep ^Version: vizstack.spec | sed -e "s/Version: //"`
-VR=`grep ^Release: vizstack.spec | sed -e "s/Release: //"`
+#
+# Developer/Release build control:
+#
+# If you want a release build, set the RELEASE environment variable to
+# something non-empty. Then execute this script.
+# The packages will be named
+#   vizstack-major.minor-release e.g. vizstack-1.1-3
+#   vizrt-major.minor-release e.g. vizrt-1.1-3
+#
+# If you want a regular developer build, then just execute this script.
+# The packages will be named 
+#   vizstack-major.minor-svnVER e.g. vizstack-1.1-svn123
+#   vizrt-major.minor-svnVER e.g. vizrt-1.1-svn123
+#
+# This change was contributed by: Simon Fowler
+# 
+
+VIZSTACK_SPEC=vizstack.spec
+VIZRT_SPEC=vizrt.spec
+
+SVN_REVISION=""
+if test -z $RELEASE; 
+then
+    if test -d .svn;
+    then
+        # Get the SVN version number, suffix it with svn
+        SVN_REVISION=svn`svn info |grep 'Revision:' |cut -d ' ' -f 2`
+
+        # Create temporary spec files with the replaced version number 
+        VIZSTACK_SPEC=vizstack.spec.in
+        VIZRT_SPEC=vizrt.spec.in
+        sed -e "s/Release: \(.*$\)/Release: $SVN_REVISION/" vizstack.spec >$VIZSTACK_SPEC
+        sed -e "s/Release: \(.*$\)/Release: $SVN_REVISION/" vizrt.spec >$VIZRT_SPEC
+    fi
+fi
+
+VV=`grep ^Version: $VIZSTACK_SPEC | sed -e "s/Version: //"`
+VR=`grep ^Release: $VIZSTACK_SPEC | sed -e "s/Release: //"`
 VIZSTACK_VERSION=$VV
 VIZSTACK_VERSION_COMPLETE=$VV-$VR
-VV=`grep ^Version: vizrt.spec | sed -e "s/Version: //"`
-VR=`grep ^Release: vizrt.spec | sed -e "s/Release: //"`
+
+VV=`grep ^Version: $VIZRT_SPEC | sed -e "s/Version: //"`
+VR=`grep ^Release: $VIZRT_SPEC | sed -e "s/Release: //"`
 VIZRT_VERSION=$VV
 VIZRT_VERSION_COMPLETE=$VV-$VR
 
@@ -169,7 +206,7 @@ find /tmp/vizrt-tmp -type d -name ".svn" | xargs rm -rf
 find /tmp/vizrt-tmp -type f -name "*~" | xargs rm -f
 
 # Last steps to build the RPM
-cp vizstack.spec ${RPM_PATH}/SPECS/vizstack.spec
+cp $VIZSTACK_SPEC ${RPM_PATH}/SPECS/vizstack.spec
 pushd /tmp/vizstack-tmp
 tar -zcvf vizstack-${VIZSTACK_VERSION}.tar.gz vizstack-${VIZSTACK_VERSION}
 cp vizstack-${VIZSTACK_VERSION}.tar.gz ${RPM_PATH}/SOURCES
@@ -184,7 +221,7 @@ fi
 popd
 
 # Build the vizrt rpm also
-cp vizrt.spec ${RPM_PATH}/SPECS
+cp $VIZRT_SPEC ${RPM_PATH}/SPECS/vizrt.spec
 pushd /tmp/vizrt-tmp
 tar -zcvf vizrt-${VIZRT_VERSION}.tar.gz vizrt-${VIZRT_VERSION}
 cp vizrt-${VIZRT_VERSION}.tar.gz ${RPM_PATH}/SOURCES
@@ -208,4 +245,12 @@ else
 	echo "Copying generated RPMS to the current directory"
 	cp $RPM_PATH/RPMS/`uname -m`/$VSRPM .
 	cp $RPM_PATH/RPMS/noarch/$VSRTRPM .
+fi
+
+# Cleanup any temporary SPEC files
+if test -z $RELEASE; 
+then
+	echo "Cleaning up..."
+	rm $VIZSTACK_SPEC
+	rm $VIZRT_SPEC
 fi

@@ -47,6 +47,16 @@ To build, just type
 
 $ bash build-vizstack.sh
 
+This will give you packages named after the svn version, i.e.
+a developer build.  Note that this the version numbers on the
+documentation will not carry the SVN revision number.
+
+To create a release, set the RELEASE environment variable to
+something non-empty
+
+$ export RELEASE=1
+$ bash build-vizstack.sh
+
 On certain Linux distros, you need to be root to build this
 package
   - RHEL
