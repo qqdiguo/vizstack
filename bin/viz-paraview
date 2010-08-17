@@ -473,7 +473,16 @@ if options.display_tile is not None:
 
 # Start the MPI server
 print  >> sys.stderr, "Waiting 4 seconds for the MPI fabric to bring up the servers...",
-server_proc = runner.run(server_cmd)
+# 
+# Use mpirun, but not in the context of any scheduler (i.e. SLURM). Some versions of MPI
+# - e.g. OpenMPI integrate with SLURM, making it very difficult to run it in the context
+# of an allocation. OpenMPI's mpirun, e.g. cannot be run using mpirun since it takes the
+# environment from srun.
+#
+# There is one downside of doing this : when somebody kills the job using 'vs-kill', the
+# X servers will get killed, but pieces of the job will remain in an uncleaned state.
+#
+server_proc = subprocess.Popen(server_cmd)
 time.sleep(4)
 
 if options.local_only:
