@@ -334,7 +334,11 @@ elif (otherMachine == True) and (vglClientHost is not None):
 	else:
 		vglRunEnv += ["VGL_COMPRESS=rgb"]
 
-if os.environ.has_key('DISPLAY'):
+# Propagare the DISPLAY variable, unless we are going to
+# execute on another machine.
+# FIXME: Is this really necessary to propagate DISPLAY
+# explicitly ?
+if os.environ.has_key('DISPLAY') and (not otherMachine):
 	vglRunEnv += ["DISPLAY=%s"%(os.environ["DISPLAY"])]
 
 # Start a shell or use vglrun as appropriate
