@@ -261,6 +261,7 @@ def processAllocateMessage(ms, client, allocateNode, ssmState, sysConfig):
 					except ValueError, e:
 						# deserialization will fail with ValueError if the input
 						# XML is incorrect in some way.
+						g_logger.error('Bad allocation request rejected. Reason : %s'%(str(e)))
 						return """
 						<ssm>
 							<response>
@@ -274,6 +275,7 @@ def processAllocateMessage(ms, client, allocateNode, ssmState, sysConfig):
 				try:
 					newObj  = vsapi.deserializeVizResource(innerList, [vsapi.GPU, vsapi.SLI, vsapi.Server, vsapi.Keyboard, vsapi.Mouse, vsapi.ResourceGroup, vsapi.VizNode])
 				except ValueError, e:
+					g_logger.error('Bad allocation request rejected. Reason : %s'%(str(e)))
 					# deserialization will fail with ValueError if the input
 					# XML is incorrect in some way.
 					return """
@@ -295,6 +297,7 @@ def processAllocateMessage(ms, client, allocateNode, ssmState, sysConfig):
 							rgNode = sysConfig["resource_groups"][rgName]
 							newObj = copy.deepcopy(rgNode) # Copy the whole definition
 						except KeyError:
+							g_logger.error('Bad allocation request rejected. Reason : Unknown resource group %s'%(rgName))
 							return """
 							<ssm>
 								<response>
@@ -320,6 +323,7 @@ def processAllocateMessage(ms, client, allocateNode, ssmState, sysConfig):
 								nNode = sysConfig["nodes"][hostName]
 								newObj = copy.deepcopy(nNode) # Copy the whole definition
 						except KeyError:
+							g_logger.error('Bad allocation request rejected. Reason : Unknown node %s'%(hostName))
 							return """
 							<ssm>
 								<response>
@@ -345,30 +349,34 @@ def processAllocateMessage(ms, client, allocateNode, ssmState, sysConfig):
 		for name in searchNodeNames:
 			uniqNameDict[name] = None
 		if len(uniqNameDict.keys()) < len(searchNodeNames):
+			emsg = 'One or more nodes in search list were specified more than once'
+			g_logger.error('Bad allocation request rejected. Reason : %s'%(emsg))
 			return """
 			<ssm>
 				<response>
 					<status>1</status>
-					<message>One or more nodes in search list were specified more than once</message>
+					<message>%s</message>
 				</response>
-			</ssm>"""
+			</ssm>"""%(emsg)
 
 		# ensure that all names are valid
 		allNodeNames = sysConfig['nodes'].keys()
 		unknownNodes = filter(lambda x: x not in allNodeNames, searchNodeNames)
 		if len(unknownNodes)>0:
+			emsg = "One or more invalid nodes in search list : '%s'"%(string.join(unknownNodes,","))
+			g_logger.error('Bad allocation request rejected. Reason : %s'%(emsg))
 			return """
 			<ssm>
 				<response>
 					<status>1</status>
-					<message>One or more invalid nodes in search list : '%s'</message>
+					<message>%s</message>
 				</response>
-			</ssm>"""%(string.join(unknownNodes,","))
+			</ssm>"""%(emsg)
 
 	try:
 		allocObj = ms.allocate(resReq, userInfo, searchNodeNames)
 	except vsapi.VizError, e:
-		g_logger.info('Failed allocation(VizError). Reason: %s'%(str(e)))
+		g_logger.error('Failed allocation(VizError). Reason: %s'%(str(e)))
 		return """
 		<ssm>
 			<response>
@@ -377,7 +385,7 @@ def processAllocateMessage(ms, client, allocateNode, ssmState, sysConfig):
 			</response>
 		</ssm>"""%(str(e))
 	except ValueError, e:
-		g_logger.info('Failed allocation(ValueError). Reason: %s'%(str(e)))
+		g_logger.error('Failed allocation(ValueError). Reason: %s'%(str(e)))
 		return """
 		<ssm>
 			<response>
