@@ -956,7 +956,12 @@ class Metascheduler:
 		# sort with maximum requirements coming first
 		# FIXME: this does not consider that the lists may have DOF=0 items. they'll get counted
 		# too, effectively reducing the value of our greedy strategy
-		reqDescList.sort(lambda x,y: len(y['requirement'])-len(x['requirement']))
+		def ordinalLength(x):
+			if x is list:
+				return len(x)
+			else:
+				return 1
+		reqDescList.sort(lambda x,y: ordinalLength(y['requirement'])-ordinalLength(x['requirement']))
 
 	"""
 	Free an allocation created by us.
