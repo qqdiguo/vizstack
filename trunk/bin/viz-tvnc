@@ -43,6 +43,7 @@ import socket
 import vsremotehelper
 import threading
 import os
+import copy
 
 defaultResolution = [1280,1024]
 desktopResLimit = [ [512,8192], [384, 8192] ]
@@ -87,16 +88,22 @@ def __parseArgs(arg_list):
 
 By default, a GPU is picked up automatically for you to use. You may also choose a GPU by passing one/more of the options described below.  You may also run a TurboVNC client in 'listen' mode on your desktop, and have the started desktop show up automatically by using the '-c' option.
 """)
-	group = OptionGroup(parser, "Frequently used options")
+	group = OptionGroup(parser, "Resource Allocation Options")
 	group.add_option("-x", "--exclusive", dest="exclusive", action="store_true", default=False, help="Allocate a complete GPU for this session. By default, this script allocates a shared GPU for you..")
-	group.add_option("-g", "--geometry", dest="desktop_resolution", help='The resolution to run the desktop at. This can be any "<width>x<height>" value, and doesn\'t need to match any display device resolution. Larger resolutions may result in higher network bandwidth usage, CPU utilization and sluggish performance')
-	group.add_option("-c", "--connect-to", dest="listening_client", help='This parameter needs to be in the format \"host[:port]". Tells the started TurboVNC server to connect to a listening TurboVNC viewer on the given host and port. You need to start the TurboVNC client in the "listening" mode prior to running this script. If you did not specify a listening port number explicitly, then the client will be listening on port 5500, and this is taken as the default port. Note that failure to connect the TurboVNC server to the specified client is not treated as a failure, and the desktop session continues to run.')
+	group.add_option("-b", "--batch-mode", dest="batch_mode", action="store_true", default=False, help="Use this if you are running this script via a batch scheduler. This will direct the script to allocate resources on the machine where the script is running")
 	group.add_option("--gpu-type", dest="gpu_type", help="Allocate a specific type of GPU for this remote session. Note that the GPU type will have spaces in it, so you will need to quote the string. Examples are \"Quadro FX 5800\", \"Quadro FX 1500\", etc. Use the --show-gpu-types option to print out a list of GPU types that may be potentially available.")
 	group.add_option("-N", "--full-node", dest="full_node", default=False, action='store_true', help='Allocate all resources on a node(in exclusive mode) for use by the desktop. Use this if you want to use applications that attempt to use ALL gpus found in the system, and there is no way to tell the application which GPUs to use.')
+	group.add_option("-a", "--allocate-from", dest="allocate_from", action="append", help="Allocate a GPU on this hostname. If you use this option multiple times, then a single GPU from one of the specified hosts will be used. Note that the allocation is independent of the order in which the hostnames are specified on the command line. The behaviour of this option changes when one of --specific-gpus or --specific-nodes is used, as noted below.")
 	parser.add_option_group(group)
-	group = OptionGroup(parser, "Additional options")
-	group.add_option("-b", "--batch-mode", dest="batch_mode", action="store_true", default=False, help="Use this if you are running this script via a batch scheduler. This will direct the script to allocate resources on the machine where the script is running")
-	group.add_option("-a", "--allocate-from", dest="allocate_from", action="append", help="Allocate a GPU on this hostname. If you use this option multiple times, then a single GPU from one of the specified hosts will be used. Note that the allocation is independent of the order in which the hostnames are specified on the command line. This option cannot be used if -b is used.")
+	group = OptionGroup(parser, "Additional Resource Allocation Options")
+	group.add_option("--specific-gpus", dest="specific_gpus", action="store_true", default=False, help="Use this if you want to allocate specific GPUs. Use the -a option one or more times to specify the GPUs you need. Note that only the first GPU will be used to power the VirtualGL/TurboVNC session. The other GPUs will be setup with X servers, and information about them will be displayed. All GPUs are allocated with exclusive access.")
+	group.add_option("--specific-nodes", dest="specific_nodes", action="store_true", default=False, help="Use this if you want to allocate specific nodes. Use the -a option one or more times to specify the nodes you need. Note that only a matching  GPU on the first node will be used to power the VirtualGL/TurboVNC session. The other GPUs will be setup with X servers, and information about them will be displayed. All GPUs are allocated with exclusive access.")
+	parser.add_option_group(group)
+	group = OptionGroup(parser, "TurboVNC options")
+	group.add_option("-g", "--geometry", dest="desktop_resolution", help='The resolution to run the desktop at. This can be any "<width>x<height>" value, and doesn\'t need to match any display device resolution. Larger resolutions may result in higher network bandwidth usage, CPU utilization and sluggish performance')
+	group.add_option("-c", "--connect-to", dest="listening_client", help='This parameter needs to be in the format \"host[:port]". Tells the started TurboVNC server to connect to a listening TurboVNC viewer on the given host and port. You need to start the TurboVNC client in the "listening" mode prior to running this script. If you did not specify a listening port number explicitly, then the client will be listening on port 5500, and this is taken as the default port. Note that failure to connect the TurboVNC server to the specified client is not treated as a failure, and the desktop session continues to run.')
+	parser.add_option_group(group)
+	group = OptionGroup(parser, "Miscellaneous options")
 	group.add_option("--show-gpu-types", dest="show_gpu_types", action="store_true", default=False, help="Prints out a list of GPU types that are potentially available for allocation")
 	group.add_option("--automation", dest="automation", action="store_true", default=False, help="This option is intended for automation use by the VizStack Remote Access tools. Not intended for command line usage.")
 	parser.add_option_group(group)
@@ -155,6 +162,10 @@ if __name__ == "__main__":
 		showError(isAutomation, "You are not allowed to use the options -b (batch mode) and -a (allocation node choice) together!")
 		sys.exit(-1)
 
+	if ((options.specific_gpus == True) or (options.specific_nodes == True)) and (len(options.allocate_from)==0):
+		showError(isAutomateion, "You need to use the -a option one or more times")
+		sys.exit(-1)
+
 	# Connect to the SSM
 	try:
 		ra = ResourceAccess()
@@ -201,6 +212,9 @@ if __name__ == "__main__":
 	# Validate the host list if user asked for specific hosts
 	# This helps us print messages that make more sense for the
 	# user
+	hostList = []
+	uniqHostList = []
+	indexList = []
 	if options.allocate_from is not None:
 		# Get a list of all hostnames from the SSM
 		nodeList = ra.queryResources(vsapi.VizNode())
@@ -208,8 +222,16 @@ if __name__ == "__main__":
 		for node in nodeList:
 		        validHostList.append(node.getHostName())
 
+		if options.specific_gpus:
+			for host in options.allocate_from:
+				parts = host.split("/")
+				hostList.append(parts[0])
+				indexList.append(int(parts[1]))
+		else:
+			hostList = options.allocate_from
+
 		# Find out what's not valid
-		invalidHostNames = filter(lambda x: x not in validHostList, options.allocate_from)
+		invalidHostNames = filter(lambda x: x not in validHostList, hostList)
 
 		# And print them out
 		if len(invalidHostNames)>0:
@@ -218,7 +240,19 @@ if __name__ == "__main__":
 			showError(isAutomation, errMsg)
 			sys.exit(-1)
 
-	# Full node ensures exclusive access	
+	for name in hostList:
+		if name not in uniqHostList:
+			uniqHostList.append(name)
+
+	# Specific gpus are always exclusive
+	if options.specific_gpus:
+		options.exclusive = True
+
+	# Specific nodes asked for are always FULL nodes
+	if options.specific_nodes:
+		options.full_node = True
+
+	# Full node implies exclusive access	
 	if options.full_node:
 		options.exclusive = True
 	
@@ -236,11 +270,6 @@ if __name__ == "__main__":
 			# we'll allocate the node from where we were launched
 			reqSrv.setHostName(socket.gethostname())
 			
-		if options.allocate_from is None:
-			potentialHostList = []
-		else:
-			potentialHostList = options.allocate_from
-
 		if options.exclusive:
 			# Allocate three resources : 
 			# an X server, a GPU, and a virtual X server
@@ -252,26 +281,48 @@ if __name__ == "__main__":
 			# has to be configured in a way that it does not over-provision GPUs
 			# Misconfiguration can cause user scripts to fail.
 			if not options.full_node:
-				reqList = [ [ reqSrv, reqGPU, Server() ] ]
+				if options.specific_gpus:
+					reqGPU.setHostName(hostList[0])
+					reqGPU.setIndex(indexList[0])
+				reqList = [ [ reqGPU, reqSrv, Server() ] ]
 			else:
 				nodeToAlloc = vsapi.VizNode()
-				nodeToAlloc.setResources([reqSrv, reqGPU, Server()])
+				if options.specific_nodes:
+					reqGPU.setHostName(hostList[0])
+					
+				nodeToAlloc.setResources([reqGPU, reqSrv, Server()])
 				reqList = [ nodeToAlloc ]
 		else:
 			# Ask for a shared GPU. The server will come from it
 			reqGPU.setShared(True)
-			reqList = [ [ reqSrv, reqGPU ] ]
-			
-		alloc = ra.allocate(reqList, potentialHostList)
+			reqList = [ [ reqGPU, reqSrv ] ]
+
+		# If more than one specific nodes or GPUs have been asked for, then do include them in the requirement as well.
+		if options.specific_gpus:
+			for i in range(1, len(hostList)):
+				useSrv = copy.deepcopy(reqSrv)
+				useGPU = copy.deepcopy(reqGPU)
+				useGPU.setHostName(hostList[i])
+				useGPU.setIndex(indexList[i])
+				subReq = [ useGPU, Server() ]
+				reqList.append(subReq)
+		elif options.specific_nodes:
+			for i in range(1, len(hostList)):
+				useNode = vsapi.VizNode(hostList[i])
+				reqList.append(useNode)
+		#pprint(reqList)
+		alloc = ra.allocate(reqList, uniqHostList)
 	except vsapi.VizError, e:
+		print e
 		showError(isAutomation, "Unable to allocate resources needed for a TurboVNC desktop session. Please try again later")
 		sys.exit(-1)
 
 	allocRes = alloc.getResources()
 
+	extraSetupList = []
 	if not options.full_node:
-		tvncServer = allocRes[0][0]
-		gpu = allocRes[0][1]
+		tvncServer = allocRes[0][1]
+		gpu = allocRes[0][0]
 		if options.exclusive:
 			xServer = allocRes[0][2]
 		else:
@@ -280,9 +331,15 @@ if __name__ == "__main__":
 		allocNode = allocRes[0]
 		# We've allocated a whole node; so pick resources from there
 		# We are guaranteed to have these !
+		allNodeServers = vsapi.findMatchingObjects(vsapi.Server, vsapi.Server(), allocNode)
+		allNodeGPUs = vsapi.findMatchingObjects(vsapi.GPU, vsapi.GPU(), allocNode)
+
+		for idx in range(1,len(allNodeGPUs)):
+			extraSetupList.append([allNodeGPUs[idx], allNodeServers[idx]])
+
 		tvncServer = vsapi.findMatchingObjects(vsapi.Server, reqSrv, allocNode)[0]
-		xServer = vsapi.findMatchingObjects(vsapi.Server, vsapi.Server(), allocNode)[0]
-		gpu = vsapi.findMatchingObjects(vsapi.GPU, reqGPU, allocNode)[0]
+		xServer = allNodeServers[0]
+		gpu = allNodeGPUs[0]
 
 	# Setup the X server that does the openGL rendering
 	screen = Screen(0)
@@ -299,6 +356,44 @@ if __name__ == "__main__":
 	screen.setGPU(gpu)
 	xServer.addScreen(screen)
 
+	# Setup the other X servers (allocated due to specific-gpus & specific-nodes)
+	if options.specific_gpus:
+		for allocPair in allocRes[1:]:
+			extraSetupList.append(allocPair)
+	elif options.specific_nodes:
+		for thisNode in allocRes[1:]:
+			nodeServers = vsapi.findMatchingObjects(vsapi.Server, vsapi.Server(), thisNode)
+			nodeGPUs = vsapi.findMatchingObjects(vsapi.GPU, vsapi.GPU(), thisNode)
+			for idx in range(len(nodeGPUs)):
+				extraSetupList.append([nodeGPUs[idx], nodeServers[idx]])
+
+	if len(extraSetupList)>0:
+		for thisPair in extraSetupList:
+			thisGPU = thisPair[0]
+			thisServer = thisPair[1]
+
+			thisScr = Screen(0)
+			if thisGPU.getAllowNoScanOut():
+				# VirtualGL uses a pbuffer anyway, so we choose a small resolution
+				# virtual framebuffer
+				thisGPU.clearScanouts()
+				thisScr.setFBProperty('resolution',[640,480])
+			else:
+				# Configure a dummy display if no display is connected
+				# already. Needed for GeForce GPUs to work.
+				if len(gpu.getScanouts())==0:
+					sc = thisGPU.getScanoutCaps()
+					thisGPU.setScanout(0, 'HP LP2065', sc[0][0])
+			thisScr.setGPU(thisGPU)
+			thisServer.addScreen(thisScr)
+		print 'NOTE: Configured %d additional GPUs for rendering, but these are not being used this script.\nThese GPUs are :'%(len(extraSetupList))
+		for thisPair in extraSetupList:
+			thisGPU = thisPair[0]
+			thisServer = thisPair[1]
+			print '  GPU %s/%d accessible using X server %s%s'%(thisGPU.getHostName(), thisGPU.getIndex(), thisServer.getHostName(), thisServer.getDISPLAY())
+		print
+	
+	
 	# Propagate the X server configuration to the SSM
 	alloc.setupViz(ra)
 
