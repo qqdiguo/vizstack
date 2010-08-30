@@ -393,6 +393,15 @@ def processAllocateMessage(ms, client, allocateNode, ssmState, sysConfig):
 				<message>%s</message>
 			</response>
 		</ssm>"""%(str(e))
+	except Exception, e:
+		g_logger.info('Failed allocation(Exception). Reason: %s'%(str(e)))
+		return """
+		<ssm>
+			<response>
+				<status>1</status>
+				<message>Unexpected error - %s</message>
+			</response>
+		</ssm>"""%(str(e))
 
 	# Success ...
 
