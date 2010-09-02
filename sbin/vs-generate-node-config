@@ -161,8 +161,11 @@ def parse_gpuInfo(inFile):
 		details = details[0]
 		# You'll get a line like
 		# Bus Location:    46.00.0
+		# 256 series nvidia drivers changed the format to
+		# Bus Location: 0000:0a.00.0
+		#
 		# We need to convert this to "PCI:70:00:0" (hex to integer)
-		busId = details.split(':')[1].lstrip().rstrip()
+		busId = details.split(':')[-1].lstrip().rstrip() # Take the value after the last colon
 		busIdParts = busId.split('.')
 		
 		busId = "PCI:%d:%02d:%01d"%(int(busIdParts[0], 16), int(busIdParts[1], 16), int(busIdParts[2], 16))
