@@ -4168,7 +4168,7 @@ def readMessageFromSocket(sock):
 			payload = payload + data
 
 		if len(payload)!=dataLen:
-			raise VizError(VizError.BAD_PROTOCOL, "Incomplete message"%(dataLenStr))
+			raise VizError(VizError.BAD_PROTOCOL, "Incomplete message. Expected message of length %s, got message of lenght %d"%(dataLenStr, len(payload)))
 	except socket.error, e:
 		raise VizError(VizError.SOCKET_ERROR, str(e))
 
