@@ -18,7 +18,27 @@
 # Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
 # Initialization for vizstack
-export PYTHONPATH=$PYTHONPATH:/opt/vizstack/python
-# Add vizstack/bin to environment
-export PATH=$PATH:/opt/vizstack/bin
-export MANPATH=$MANPATH:/opt/vizstack/man
+
+# Make sure scripts can find the python library
+if [[ -z $PYTHONPATH ]] # test for existence of PYTHONPATH 
+then
+    export PYTHONPATH=/opt/vizstack/python
+else
+    export PYTHONPATH="${PYTHONPATH}:/opt/vizstack/python"
+fi
+
+# Make sure scripts are usable from the command line
+if [[ -z $PATH ]]
+then
+    export PATH=/opt/vizstack/bin
+else
+    export PATH="${PATH}:/opt/vizstack/bin"
+fi
+
+# Ensure manpages are usable
+if [[ -z $MANPATH ]]
+then
+    export MANPATH=/opt/vizstack/man
+else
+    export MANPATH="${MANPATH}:/opt/vizstack/man"
+fi
