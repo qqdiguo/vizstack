@@ -460,8 +460,8 @@ if __name__ == "__main__":
 			vsremotehelper.sendMessage("<response><connectTo>%s</connectTo></response>"%(userConnectsTo))
 
 	except vsapi.VizError, e:
-		showError(isAutomation,"TurboVNC server failed to start.")
-
+		showError(isAutomation,"TurboVNC server failed to start on %s%s. Please check that you have setup a password for TurboVNC on %s for the current user using /opt/TurboVNC/bin/vncpasswd"%(tvncServer.getHostName(), tvncServer.getDISPLAY(), tvncServer.getHostName()))
+		sys.exit(-1)
 	autoThread = None
 	if isAutomation==True:
 		class waitThread(threading.Thread):
