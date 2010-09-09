@@ -440,12 +440,12 @@ def processAllocateMessage(ms, client, allocateNode, ssmState, sysConfig):
 		xServerAvailableFor[srv.hashKey()] = []
 
 	if appNameNode is None:
-		appName = '<unknown>'
+		appName = 'unknown'
 	else:
 		try:
 			appName = domutil.getValue(appNameNode)
 		except:
-			appName = '<unknown>'
+			appName = 'unknown'
 
 	# store the allocation information as part of the SSM state
 	ssmState["allocations"][allocId] = {
