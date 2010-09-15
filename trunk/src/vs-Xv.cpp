@@ -111,6 +111,47 @@ void int_handler(int sig)
 	addNotification(g_signotify_pipe, CODE_SIGINT);
 }
 
+void tvnc_cleanup(const char *display)
+{
+	char fname[256];
+	sprintf(fname, "/tmp/.X%s-lock", display+1);
+	unlink(fname);
+
+	sprintf(fname, "/tmp/.X11-unix/X%s", display+1);
+	unlink(fname);
+}
+
+int g_perServerLockFD = -1;
+bool take_per_server_lock(const char*xdisplay)
+{
+	string lockPath = "/tmp/.exclusive.vs-Xv";
+	lockPath += (xdisplay+1);
+
+	mode_t oldMask = umask(0);
+	// NOTE: everyone has access to the lock file. 
+	g_perServerLockFD = open(lockPath.c_str(), O_WRONLY | O_CREAT | O_TRUNC , S_IRWXU | S_IRWXG | S_IRWXO);
+	if(g_perServerLockFD==-1)
+	{
+		perror("ERROR: Failed to create per server lock file. Reason :");
+		return false;
+	}
+
+	int ret;
+	RETRY_ON_EINTR(ret, flock(g_perServerLockFD,  LOCK_EX));
+	if (ret==-1)
+	{
+		perror("ERROR: Failed to lock per server lock file. Reason :");
+		close(g_perServerLockFD);
+		g_perServerLockFD = -1;
+		return false;
+	}
+
+	umask(oldMask);
+	return true;
+}
+
+
+
 int main(int argc, char**argv)
 {
 	int ssmSocket=-1;
@@ -386,6 +427,16 @@ int main(int argc, char**argv)
 		delete configParser;
 	}
 
+	// Take an exclusive lock for this virtual server
+	// This tries to prevent race conditions between this
+	// process cleaning up the locks & VNC process creating
+	// the lock
+	if(!take_per_server_lock(xdisplay))
+	{
+		fprintf(stderr, "ERROR: Cannot continue.\n");
+		exit(-1);
+	}
+
 	// Register SIGCHLD handler first so that we get exit notifications from our child X
 	// server
 	struct sigaction siginfo;
@@ -429,6 +480,9 @@ int main(int argc, char**argv)
 
 	if (childpid==0)
 	{
+		// FD gets duplicated on fork, so we close it here
+		close(g_perServerLockFD);
+
 		// Close the FDs on the child
 		// FIXME: more elegant and generic code could close all FDs till MAX_FD
 		close(g_signotify_pipe[0]);
@@ -682,10 +736,6 @@ int main(int argc, char**argv)
 			printf("INFO : Removing record of X server allocation.\n");
 	}
 
-	// remove the X config file that we created
-	// FIXME: remove this before release ?
-	// unlink(xorg_config_path);
-
 	// Update System State Manager with information that the X server has stopped.
 	// NOTE: we need to do this after removing the X org file, else there is a chance of
 	// an improper config file in place. This is not a big problem, but it's nice to be
@@ -704,6 +754,9 @@ int main(int argc, char**argv)
 	notifyMessage += "</server>"
 				"</update_x_avail>"
 		"</ssm>";
+
+	// Cleanup the TVNC files
+	tvnc_cleanup(xdisplay);
 
 	if(ssmSocket!=-1)
 	{
