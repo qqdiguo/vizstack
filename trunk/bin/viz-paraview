@@ -165,13 +165,19 @@ def createParaviewDRAppFile(fastNetworkMap, mpilib, allServers, allocId, port):
     appfileobj.flush()
     return appfileobj
 
-def createParaviewServerFile(mpilib, server_hostname, allocId, port, no_shared_home=False):
+def createParaviewServerFile(client_needed, mpilib, server_hostname, allocId, port, no_shared_home=False):
     home_dir = os.environ['HOME']
     server_file = '%s/.config/ParaView/servers.pvsc'%(home_dir)
     # Override localhost with local name
     if server_hostname=='localhost':
         server_hostname = socket.gethostname()
     server_url = 'cs://%s:%d'%(server_hostname, port)
+
+    # Don't try to create/modify a client file if this 
+    # script won't start the client
+    if not client_needed:
+        return server_url
+
     # If the file does not exist create an empty file
     if not os.path.exists(server_file):
         f = open(server_file, 'w')
@@ -249,8 +255,8 @@ def cleanupServerFile(server_url):
     xmldoc.writexml(open(server_file, 'w'))
 
 # Used only in Distributed Rendering Mode (DR)    
-def createParaviewDRFiles(fastNetworkMap, mpilib, server, allServers, allocId, port):
-    server_url = createParaviewServerFile(mpilib, server, allocId, port)
+def createParaviewDRFiles(client_needed, fastNetworkMap, mpilib, server, allServers, allocId, port):
+    server_url = createParaviewServerFile(client_needed, mpilib, server, allocId, port)
     return (server_url, createParaviewDRAppFile(fastNetworkMap, mpilib, allServers, allocId, port))
 
 def parseArgs(arg_list):
@@ -292,7 +298,7 @@ def parseArgs(arg_list):
             
 	return (options, args)
 
-def distributedRenderingMode(allServers, fastNetworkMap, mpilib, server_port):
+def distributedRenderingMode(client_needed, allServers, fastNetworkMap, mpilib, server_port):
     global default_base_server_port
 
     # Master runs on the first server
@@ -316,13 +322,13 @@ def distributedRenderingMode(allServers, fastNetworkMap, mpilib, server_port):
     
     # The first one is the display_group, the rest are the render gpus, so iterate only through render resources.
     # The render resources are of the form [GPU-0, Server-0, GPU-1, Server-1,...,GPU-n, Server-n], so iterate in steps of 2.
-    (server_url, config_file) = createParaviewDRFiles(fastNetworkMap, mpilib, masterHost, allServers, alloc1.getId(), server_port)  # resources[0][1] -> will be the server with a rank of 0
+    (server_url, config_file) = createParaviewDRFiles(client_needed, fastNetworkMap, mpilib, masterHost, allServers, alloc1.getId(), server_port)  # resources[0][1] -> will be the server with a rank of 0
     #os.system('cat %s'%(config_file.name))
     client_cmd = [ 'paraview', '-s=%s'%(server_url.replace("cs://","").replace(":","_")) ] # -tdx=%d -tdy=%d'%(cmdPrefix, masterHost, cols, rows)
     server_cmd = [ mpiOptNames[mpilib]['mpirun'], mpiOptNames[mpilib]['appfile'], config_file.name ]
     return (alloc1, client_cmd, server_cmd, config_file, server_url, allServers[0].getScreen(0))
 
-def tiledDisplayMode(fastNetworkMap, mpilib, res_access, tiled_display, display_mode, port):
+def tiledDisplayMode(client_needed, fastNetworkMap, mpilib, res_access, tiled_display, display_mode, port):
     # Allocate requested resources
     rg = vsapi.ResourceGroup(tiled_display)
     alloc1 = res_access.allocate([rg])
@@ -345,7 +351,7 @@ def tiledDisplayMode(fastNetworkMap, mpilib, res_access, tiled_display, display_
     (cols, rows) = allocRG.getHandlerObject().getLayoutDimensions()
     server_port = determineServerPort(rows, cols, allocRG.getHandlerObject().getLayoutMatrix(), port)
     config_file = createParaviewTDConfigFile(fastNetworkMap, mpilib, rows, cols, allocRG, allocId, server_port)
-    server_url = createParaviewServerFile(mpilib, thisServer.getHostName(), allocId, server_port)
+    server_url = createParaviewServerFile(client_needed, mpilib, thisServer.getHostName(), allocId, server_port)
     client_cmd = [ mpiOptNames[mpilib]['mpirun'], 'paraview', '-s=%s'%(server_url.replace("cs://","").replace(":","_")) ]
     server_cmd = [ mpiOptNames[mpilib]['mpirun'], mpiOptNames[mpilib]['appfile'], config_file.name ]
     return (alloc1, client_cmd, server_cmd, config_file, server_url, thisScreen)
@@ -399,7 +405,7 @@ for thisNode in allNodes:
 
 server_url = None
 if(options.display_tile):
-    (alloc1, client_cmd, server_cmd, config_file, server_url, runner) = tiledDisplayMode(fastNetworkMap, mpilib, ra, options.display_tile, display_mode, server_port)
+    (alloc1, client_cmd, server_cmd, config_file, server_url, runner) = tiledDisplayMode(options.local_only, fastNetworkMap, mpilib, ra, options.display_tile, display_mode, server_port)
 else:
     hostList = []
     uniqHostList = []
@@ -482,7 +488,7 @@ else:
         srv.addScreen(scr)
         allServers.append(srv)
 
-    (alloc1, client_cmd, server_cmd, config_file, server_url, runner) = distributedRenderingMode(allServers, fastNetworkMap, mpilib, server_port)
+    (alloc1, client_cmd, server_cmd, config_file, server_url, runner) = distributedRenderingMode(options.local_only, allServers, fastNetworkMap, mpilib, server_port)
 
 if(alloc1 == None):
     print >> sys.stderr, "Allocation failed"
