@@ -92,23 +92,26 @@ class SSHConnector(Connector):
 			t.start_client()
 		except paramiko.SSHException:
 			raise ConnectorError("SSH negotiation to host '%s' failed."%(hostname))
-			
-		try:
-			keys = paramiko.util.load_host_keys(os.path.expanduser('~/.ssh/known_hosts'))
-		except IOError:
-			try:
-				keys = paramiko.util.load_host_keys(os.path.expanduser('~/ssh/known_keys'))
-			except IOError:
-				raise ConnectorError("Unable to open host keys file")
 
-			# Check server's host key
-			key = t.get_remote_server_key()
-			if not keys.has_key(hostname):
-				raise ConnectorError("Unknown host key")
-			elif not keys[hostname].has_key(key.get_name()):
-				raise ConnectorError("Unknown host key")
-			elif keys[hostname][key.get_name()] != key:
-				raise ConnectorError("Host key has changed")
+# Skipping key validation. This does not work on Windows. The burden of detecting security
+# issues is too much for this small tool. So we skip it.
+#
+#		try:
+#			keys = paramiko.util.load_host_keys(os.path.expanduser('~/.ssh/known_hosts'))
+#		except IOError:
+#			try:
+#				keys = paramiko.util.load_host_keys(os.path.expanduser('~/.ssh/known_keys'))
+#			except IOError:
+#				raise ConnectorError("Unable to open host keys file")
+#
+#			# Check server's host key
+#			key = t.get_remote_server_key()
+#			if not keys.has_key(hostname):
+#				raise ConnectorError("Unknown host key")
+#			elif not keys[hostname].has_key(key.get_name()):
+#				raise ConnectorError("Unknown host key")
+#			elif keys[hostname][key.get_name()] != key:
+#				raise ConnectorError("Host key has changed")
 
 		self.__agent_auth(t, username)
 		if not t.is_authenticated():
