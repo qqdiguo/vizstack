@@ -39,6 +39,7 @@ import os
 import subprocess
 import socket
 import copy
+import pwd
 
 parser = OptionParser(
 usage= "usage: viz_vgl [options] [application args]",
@@ -457,8 +458,15 @@ if os.environ.has_key('DISPLAY') and (not otherMachine):
 
 # Start a shell or use vglrun as appropriate
 if options.start_shell == True:
-	args = ["/bin/bash"]
+	#args = ["/bin/bash"]
+	# Get the shell preferred by the user from the password database
+	# Index 6 corresponds to the command interpreter 
+	# see http://docs.python.org/library/pwd.html
+	args = [ pwd.getpwuid(os.getuid())[6] ]
 	if otherMachine:
+		# Start an interactive shell
+		# NOTE: I have checked that bash, ksh, tcsh and zsh interpret
+		# the "-i" option the same way - i.e. they all start an interactive shell
 		args += ["-i"] # -i for interactive shell
 	print "Allocated GPU %d controlled by X Server '%s' on host '%s' for you."%(gpu.getIndex(), xServer.getDISPLAY(), xServer.getHostName())
 	if (vglNode != "localhost") and (vglNode != socket.gethostname()):
