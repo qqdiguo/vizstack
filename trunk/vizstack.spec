@@ -1,7 +1,7 @@
 Summary: Software to convert one/more machines with GPUs into a sharable, multi-user, multi-session visualization resource.
 Name: vizstack
 Version: 1.1
-Release: 3
+Release: 4
 License: GPLV2
 Group: Development/Tools
 URL: http://vizstack.sourceforge.net
@@ -44,7 +44,7 @@ rm -rf $RPM_BUILD_ROOT
 /opt/vizstack/bin/*
 /opt/vizstack/sbin/*
 /opt/vizstack/share/*
-/opt/vizstack/src/*
+#/opt/vizstack/src/*
 /usr/X11R6/bin/vs-X
 /etc/vizstack
 /etc/profile.d/vizstack.csh
@@ -54,7 +54,27 @@ rm -rf $RPM_BUILD_ROOT
 /opt/vizstack/man/man1/
 
 %changelog
-* Wed Jul 14 2011 Shree Kumar <shreekumar@hp.com>
+* Wed Oct 11 2010 Shree Kumar <shreekumar@hp.com>
+- New version 1.1-4
+   - Enhancements
+     - Added ways to control allocation of GPUs by vgl, tvnc and
+       paraview scripts (SF feature request 3052964)
+     - Better internal & external error logging in some cases
+   - Addressed issues
+     - Fixed an allocation bug where multiple node allocations would cause an
+       SSM crash
+     - Configuration failure with nvidia 256 series drivers (SF Bug 3058046)
+     - Fixed terminal issues when viz-vgl is invoked with --shell
+     - Paraview does not run with SLURM+OpenMPI(SF Bug 3046830)
+     - viz-vgl --shell now picks up the user's preferred shell (SF Bug 3080926)
+     - TurboVNC lock files hang around (SF Bug 3066775)
+     - Error using Viz Connector (SF Bug 3060186)
+     - In the profile scripts, we check for existence of environment variables
+       before setting them (contributed by Klaus Reuter)
+   - Packaging
+     - C++ source files are not inlcuded in the RPM
+     
+* Wed Jul 14 2010 Shree Kumar <shreekumar@hp.com>
 - Updated version number to 1.1-3
    - Few bug fixes
      - Fixed to work with SLURM 2.10 & above (Ubuntu 10.04, web download)
