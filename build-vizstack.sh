@@ -95,7 +95,7 @@ rm -Rf /tmp/vizstack-tmp/vizstack-${VIZSTACK_VERSION}
 mkdir -p /tmp/vizstack-tmp/vizstack-${VIZSTACK_VERSION}/opt/vizstack
 mkdir -p /tmp/vizstack-tmp/vizstack-${VIZSTACK_VERSION}/opt/vizstack/share
 mkdir -p /tmp/vizstack-tmp/vizstack-${VIZSTACK_VERSION}/opt/vizstack/share/doc
-mkdir -p /tmp/vizstack-tmp/vizstack-${VIZSTACK_VERSION}/opt/vizstack/src
+#mkdir -p /tmp/vizstack-tmp/vizstack-${VIZSTACK_VERSION}/opt/vizstack/src
 mkdir -p /tmp/vizstack-tmp/vizstack-${VIZSTACK_VERSION}/usr/X11R6/bin
 mkdir -p /tmp/vizstack-tmp/vizstack-${VIZSTACK_VERSION}/etc/vizstack
 mkdir -p /tmp/vizstack-tmp/vizstack-${VIZSTACK_VERSION}/etc/vizstack/templates
@@ -118,7 +118,7 @@ cp -r sbin /tmp/vizstack-tmp/vizstack-${VIZSTACK_VERSION}/opt/vizstack
 cp -r python /tmp/vizstack-tmp/vizstack-${VIZSTACK_VERSION}/opt/vizstack
 
 # Sources
-cp -r src/{*.c,*.cpp,*.hpp,*.py,SConstruct,*.txt} /tmp/vizstack-tmp/vizstack-${VIZSTACK_VERSION}/opt/vizstack/src
+#cp -r src/{*.c,*.cpp,*.hpp,*.py,SConstruct,*.txt} /tmp/vizstack-tmp/vizstack-${VIZSTACK_VERSION}/opt/vizstack/src
 
 # README
 cp -r doc/README /tmp/vizstack-tmp/vizstack-${VIZSTACK_VERSION}/opt/vizstack/share/doc
