@@ -2110,6 +2110,10 @@ def ssm_body():
 		g_logger.info("Node %s :"%(node))
 		for line in pformat(nodeInfo.getResources()).split('\n'):
 			g_logger.info(line)
+	g_logger.info('Node weights:')
+	for node in sysConfig['nodes']:
+		nodeInfo = sysConfig['nodes'][node]
+		g_logger.info('  %s => %d'%(node, nodeInfo.getAllocationWeight()))
 	g_logger.info('Defined resource groups:')
 	for rgName in sysConfig['resource_groups'].keys():
 		g_logger.info('    '+rgName)
