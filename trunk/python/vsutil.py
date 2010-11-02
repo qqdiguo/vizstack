@@ -552,7 +552,7 @@ def loadLocalConfig(
 		nodeIdx = nodeIdx+1
 
 		try:
-			newNode.setAllocationBias(int(domutil.getValue(domutil.getChildNode(node, "allocationBias"))))
+			newNode.setAllocationBias(int(domutil.getValue(domutil.getChildNode(node, "weight"))))
 		except:
 			pass
 
