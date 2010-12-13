@@ -153,7 +153,7 @@ for y in range(rows-1,-1,-1):
 		thisHost = '%s:%d'%(fastNetworkMap[hostName], portNum)
 		dims = thisScreen.getFBProperty('resolution')
 		hosts.append(thisHost)
-		cmd = syncToVBlank + ["%s/ClusterServer"%(binPrefix), "-geometry" "%dx%d+0+0"%(dims[0],dims[1]), "-w", "%s"%(thisHost) ]
+		cmd = syncToVBlank + ["%s/ClusterServer"%(binPrefix), "-geometry", "%dx%d+0+0"%(dims[0],dims[1]), "-w", "%s"%(thisHost) ]
 		#print cmd
 		# Start the server
 		servers.append(thisScreen.run(cmd,launcherEnv=safeEnv))
