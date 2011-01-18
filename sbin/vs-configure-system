@@ -595,15 +595,16 @@ for name in generatedTemplates['gpu']:
 		<vendor>%s</vendor>"""%(thisGPU.getType(), thisGPU.getVendor())
 	print >>fp, """
 		<allowNoScanOut>%d</allowNoScanOut>"""%(thisGPU.getAllowNoScanOut())
-	for portIndex in sc.keys():
-		print >>fp, """
-		<scanout_caps>
-			<index>%d</index>"""%(portIndex)
-		for outType in sc[portIndex]:
+	if sc is not None:
+		for portIndex in sc.keys():
 			print >>fp, """
-			<type>%s</type>"""%(outType)
-		print >>fp, """
-		</scanout_caps>"""
+			<scanout_caps>
+				<index>%d</index>"""%(portIndex)
+			for outType in sc[portIndex]:
+				print >>fp, """
+				<type>%s</type>"""%(outType)
+			print >>fp, """
+			</scanout_caps>"""
 	print >>fp, """
 		<limits>
 			<max_width>%d</max_width>
