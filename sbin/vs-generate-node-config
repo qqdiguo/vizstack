@@ -434,7 +434,13 @@ if options.recurse == False:
 		# With certain versions of the nvidia driver, I have seen that xinit doesn't work
 		# This check is for the first time the X server is used. If this exits, so will other instances.
 		# We use a timeout of 30 secs. Typically, the X server will not run more than a few seconds.
-		ret = runSystemTimed("xinit /opt/vizstack/bin/vs-get-limits %s -- -logverbose 6 -config %s"%(temp_result_file, output_path), timeout=30)
+		try:
+			ret = runSystemTimed("xinit /opt/vizstack/bin/vs-get-limits %s -- -logverbose 6 -config %s"%(temp_result_file, output_path), timeout=30)
+		except OSError, e:
+			msg = 'Failed to run "xinit". Reason:'+str(e)+'\n'
+			msg += "This program is expected to be executable via PATH. Please ensure that your have a complete X server installation."
+			exitError(msg)
+
 		if ret is None:
 			os.system("killall -9 X 2>/dev/null") # Kill all running X servers
 			os.system("killall -9 Xorg 2>/dev/null")
