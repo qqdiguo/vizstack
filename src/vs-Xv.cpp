@@ -717,6 +717,7 @@ int main(int argc, char**argv)
 				if(g_debugPrints)
 					printf("INFO : Propagating SIGTERM to child\n");
 
+				tvnc_cleanup(xdisplay);
 				kill(childpid, SIGTERM);
 				break;
 
@@ -724,6 +725,7 @@ int main(int argc, char**argv)
 				if(g_debugPrints)
 					printf("INFO : Propagating SIGINT to child\n");
 
+				tvnc_cleanup(xdisplay);
 				kill(childpid, SIGTERM);
 				break;
 		}
