@@ -141,7 +141,7 @@ def createParaviewTDConfigFile(fastNetworkMap, mpilib, rows, cols, allocRG, allo
     f.flush()
     return f
 
-def createParaviewDRAppFile(fastNetworkMap, mpilib, allServers, allocId, port):
+def createParaviewDRAppFile(fastNetworkMap, mpilib, allServers, allocId, port, share_count):
     try:
         appfileobj = tempfile.NamedTemporaryFile()
     except IOError, e:
@@ -161,7 +161,9 @@ def createParaviewDRAppFile(fastNetworkMap, mpilib, allServers, allocId, port):
         # Also, enabling offscreen rendering guarantees correct rendering
         # irrespective of the framebuffer resolution.
         cmd += " --use-offscreen-rendering"
-	print >>appfileobj, cmd
+        # Replicate command as many times the GPU is shared
+        for i in range(share_count):
+            print >>appfileobj, cmd
     appfileobj.flush()
     return appfileobj
 
@@ -255,9 +257,9 @@ def cleanupServerFile(server_url):
     xmldoc.writexml(open(server_file, 'w'))
 
 # Used only in Distributed Rendering Mode (DR)    
-def createParaviewDRFiles(client_needed, fastNetworkMap, mpilib, server, allServers, allocId, port):
+def createParaviewDRFiles(client_needed, fastNetworkMap, mpilib, server, allServers, allocId, port, share_count):
     server_url = createParaviewServerFile(client_needed, mpilib, server, allocId, port)
-    return (server_url, createParaviewDRAppFile(fastNetworkMap, mpilib, allServers, allocId, port))
+    return (server_url, createParaviewDRAppFile(fastNetworkMap, mpilib, allServers, allocId, port, share_count))
 
 def parseArgs(arg_list):
 	parser = OptionParser()
@@ -280,6 +282,7 @@ def parseArgs(arg_list):
 	group.add_option("--no-framelock", action="store_true", dest="disable_framelock", default=False, help="VizStack sets up framelock if this is enabled in the configuration of the used tiled display. Framelock provides hardware synchronization of all the displays in the Tiled Display. If your framelock chain or tiled display is not setup properly for framelock, then ParaView will not be started. Use this option if framelock setup fails, but you want to use the tiled display without framelock")
 	parser.add_option_group(group)
 	group = OptionGroup(parser, "Additional Options")
+	group.add_option("-S", "--gpu-share-count", action="store", type="int", default=1, dest="share_count", help="Share an allocated GPU with these many pvserver processes. Effective only with -r")
         group.add_option("-l", "--local", action="store_true", dest="local_only", default=False, help="Use this option if you want the script to start a ParaView client on the local desktop. By default, only the ParaView server is started, allowing you to connect to the ParaView server using the ParaView client running on your desktop.")
         group.add_option("--mpilib", action="store", type="string", dest="mpilib", default="openmpi", help="The MPI library that should be used, currently the values supported are 'hpmpi','mpich' and 'openmpi'.")
 	parser.add_option_group(group)
@@ -295,7 +298,10 @@ def parseArgs(arg_list):
         if(options.local_only==True) and (options.connect_to is not None):
             print >> sys.stderr, "Error: You can't use reverse connection(-c|--connect-to) when you have opted to run a local client (-l|--local)"
             sys.exit(-1)
-            
+        if(options.num_render_gpus):
+            if options.share_count<1:
+                print >> sys.stderr, "Error: Bad value for GPU Share Count(%d). GPU Share Count should be >=1"%(options.share_count)
+                sys.exit(-1)
 	return (options, args)
 
 def distributedRenderingMode(client_needed, allServers, fastNetworkMap, mpilib, server_port):
@@ -322,7 +328,7 @@ def distributedRenderingMode(client_needed, allServers, fastNetworkMap, mpilib, 
     
     # The first one is the display_group, the rest are the render gpus, so iterate only through render resources.
     # The render resources are of the form [GPU-0, Server-0, GPU-1, Server-1,...,GPU-n, Server-n], so iterate in steps of 2.
-    (server_url, config_file) = createParaviewDRFiles(client_needed, fastNetworkMap, mpilib, masterHost, allServers, alloc1.getId(), server_port)  # resources[0][1] -> will be the server with a rank of 0
+    (server_url, config_file) = createParaviewDRFiles(client_needed, fastNetworkMap, mpilib, masterHost, allServers, alloc1.getId(), server_port, options.share_count)  # resources[0][1] -> will be the server with a rank of 0
     #os.system('cat %s'%(config_file.name))
     client_cmd = [ 'paraview', '-s=%s'%(server_url.replace("cs://","").replace(":","_")) ] # -tdx=%d -tdy=%d'%(cmdPrefix, masterHost, cols, rows)
     server_cmd = [ mpiOptNames[mpilib]['mpirun'], mpiOptNames[mpilib]['appfile'], config_file.name ]
