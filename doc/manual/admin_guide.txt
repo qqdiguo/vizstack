@@ -765,7 +765,7 @@ in a production environment where you will already have a shared file-system in 
 
 You may want to install VizStack Remote Access Tools if you use Hewlett Packard RGS software
  or TurboVNC. The Remote Access Tools gives end-users an easy to use graphical user 
-interface to start remote desktop sessions using either of these remote access software. 
+interface to start remote desktop sessions using either of these remote access software. The VizStack Remote Access Tools need to be installed only the desktop/laptop systems of end-users (and not on the cluster).
 
 For Windows end-users, please download and install VizStackRemoteAccessSetup-v1.0.exe. This 
 is a standard windows installer.
@@ -872,7 +872,7 @@ network without restrictions in terms of internal connections, then this is
 not a concern.  Otherwise, you may need to configure your firewall to achieve this.
 ============================================================================
 
-==== Configuring GPU sharing ====
+==== Customizing GPU sharing ====
 
 VizStack (v1.1 and above) allows users to share GPUs. When used with TurboVNC,
 this allows administrators to configure a system to host more remote users than 
