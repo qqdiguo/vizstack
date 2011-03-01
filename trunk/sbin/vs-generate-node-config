@@ -157,7 +157,20 @@ def parse_gpuInfo(inFile):
 		if runSystem("modprobe nvidia", False)!=0:
 			print >>sys.stderr, "ERROR: Failed to run 'modprobe nvidia'. Please ensure that the nvidia driver is installed properly."
 			sys.exit(1)
-		details = getOutput('cat /proc/driver/nvidia/cards/0 | grep "Bus Location"')
+
+		# Information about GPU 0 can be found in different files, depending on driver version
+		# pre-270     : /proc/driver/nvidia/cards/0 
+		# 270 & above : /proc/driver/nvidia/gpus/0/information
+		# 
+		# We check for the pre-270 drivers first, and then fallback to the newer path.
+		try:
+			gpu0info = '/proc/driver/nvidia/cards/0'
+			open(gpu0info, 'r')
+		except IOError:
+			gpu0info = '/proc/driver/nvidia/gpus/0/information'
+			open(gpu0info, 'r')
+
+		details = getOutput('cat %s | grep "Bus Location"'%(gpu0info))
 		details = details[0]
 		# You'll get a line like
 		# Bus Location:    46.00.0
