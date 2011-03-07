@@ -371,12 +371,14 @@ if options.recurse == False:
                 <scanout_caps>
                         <index>2</index>
                         <type>digital</type>
-                        <type>analog</type>
                 </scanout_caps>
                 <scanout_caps>
                         <index>3</index>
                         <type>digital</type>
-                        <type>analog</type>
+                </scanout_caps>
+                <scanout_caps>
+                        <index>4</index>
+                        <type>digital</type>
                 </scanout_caps>
                 <limits>
                         <max_width>4096</max_width>
